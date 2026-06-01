@@ -1,0 +1,12 @@
+outputs/
+vendor/
+CLAUDE.md
+*.pyc
+__pycache__/
+.env
+*.egg-info/
+dist/
+*.bin
+*.safetensors
+*.pt
+*.ckpt
