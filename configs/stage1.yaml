@@ -1,0 +1,18 @@
+# Stage 1: 来源审计 + 时间属性
+
+input:
+  format: auto            # auto | jsonl | parquet | hf
+
+tokenizer:
+  backend: words          # words（空格分词，快速）| hf（HF Tokenizers，精确）
+  hf_name: null           # backend=hf 时必填，例如 "bert-base-uncased"
+
+stats:
+  percentiles: [25, 50, 75, 90, 95, 99]
+
+license:
+  timeout_per_doc: 30     # ScanCode 每文档超时秒数
+  max_docs: null          # null = 扫描全部；设为整数可限制数量（调试用）
+
+output:
+  base_dir: outputs/stage1
