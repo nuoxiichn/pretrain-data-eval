@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pretrain-data-eval"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    # 数据读写 & 统计
+    "datatrove[processing,io]>=0.3",
+    # HTML/PDF 正文抽取
+    "trafilatura>=1.8",
+    # 语言识别
+    "fasttext>=0.9.2",         # lid.176 模型需单独下载
+    # PII 检测
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+    "spacy>=3.7",              # presidio 默认 NLP 后端
+    # 毒性分类
+    "detoxify>=0.5",
+    # 代码解析
+    "tree-sitter>=0.21",
+    # 去重 & 污染（Dolma Rust 后端）
+    "dolma>=1.0",
+    # 许可证检测
+    "scancode-toolkit>=32",
+    # Tokenization
+    "tokenizers>=0.19",
+    "transformers>=4.40",
+    # 合成数据元数据分析（自实现，无额外依赖）
+    # 工具链
+    "pyyaml>=6",
+    "tqdm>=4.66",
+    "pandas>=2",
+    "numpy>=1.26",
+    "click>=8",
+]
+
+[project.optional-dependencies]
+gpu = [
+    # SemDeDup（Stage 4）+ FineWebEduClassifier（Stage 6）
+    "nemo-curator[all]>=0.5",
+    "faiss-gpu>=1.7",          # CPU fallback: faiss-cpu
+    "torch>=2.2",
+    # Binoculars（Stage 7）— 从 GitHub 安装：
+    #   pip install git+https://github.com/ahans30/Binoculars.git
+    # Fast-DetectGPT（Stage 7）— 从 GitHub 安装：
+    #   pip install git+https://github.com/baoguangsheng/fast-detect-gpt.git
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.4",
+]
+
+# 需要手动安装的外部工具（不通过 pip）：
+#   Gitleaks     — https://github.com/gitleaks/gitleaks/releases（二进制）
+#   GlotLID v3   — 模型文件：pip install glotlid（或手动下载 .bin）
+#   KenLM        — pip install kenlm（需 C++ 构建工具）
+#   DCLM fasttext — 模型文件：fasttext_oh_eli5.bin（手动下载）
+#   BigCode PII  — git clone https://github.com/bigcode-project/bigcode-dataset
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

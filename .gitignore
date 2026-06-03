@@ -1,5 +1,5 @@
 outputs/
-vendor/
+data/
 CLAUDE.md
 *.pyc
 __pycache__/
