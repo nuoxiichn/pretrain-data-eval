@@ -119,12 +119,16 @@ def _group_table(doc_cnt: Counter, tok_cnt: Counter, total_toks: int) -> dict:
 def compute_doc_stats(
     docs: Iterable[Document],
     tokenize: Callable[[str], int],
+    on_doc: Callable[[DocResult], None] | None = None,
 ) -> tuple[list[DocResult], dict]:
     """Compute corpus-level and per-document statistics.
 
+    on_doc: if provided, called for each DocResult (streaming mode for large
+            corpora). The returned per_doc list will be empty in this case.
     Returns (per_doc_results, summary_dict).
     """
     per_doc: list[DocResult] = []
+    n_docs = 0
     char_counts: list[int] = []
     tok_counts: list[int] = []
     bucket_cnt: Counter = Counter()
@@ -164,7 +168,7 @@ def compute_doc_stats(
         else:
             ts_missing += 1
 
-        per_doc.append(DocResult(
+        result = DocResult(
             doc_id=str(doc["doc_id"]),
             scores={"char_count": nc, "token_count": nt, "length_bucket": bucket},
             flags={
@@ -173,9 +177,14 @@ def compute_doc_stats(
                 "missing_language": doc.get("language") is None,
                 "missing_source": doc.get("source") is None,
             },
-        ))
+        )
+        if on_doc is not None:
+            on_doc(result)
+        else:
+            per_doc.append(result)
+        n_docs += 1
 
-    total = len(per_doc)
+    total = n_docs
     total_toks = sum(tok_counts)
     summary = {
         "total_docs": total,

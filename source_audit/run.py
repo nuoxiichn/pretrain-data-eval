@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 # Make project root importable regardless of working directory.
@@ -67,18 +68,23 @@ def stats(input_path: str, dataset: str, config_path: str, output_base: str, out
     )
 
     click.echo(f"[stats] 读取 {input_path} ...")
-    docs = read_documents(input_path)
-    per_doc, summary = compute_doc_stats(docs, tokenize)
+    docs = read_documents(input_path, config=cfg.get("input", {}))
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "stats")
-    pd_path = write_per_doc(per_doc, out_dir)
+    per_doc_path = out_dir / "per_doc.jsonl"
+
+    with per_doc_path.open("w", encoding="utf-8") as f:
+        def _write(r: DocResult) -> None:
+            f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
+        _, summary = compute_doc_stats(docs, tokenize, on_doc=_write)
+
     sm_path = write_summary(summary, out_dir)
 
     click.echo(f"[stats] {summary['total_docs']} 条文档")
     click.echo(f"  token 总量: {summary['token_stats'].get('total', 'N/A'):,}")
     click.echo(f"  时间字段存在率: {summary['timestamp']['present_pct']:.1%}")
     click.echo(f"  -> {sm_path}")
-    click.echo(f"  -> {pd_path}")
+    click.echo(f"  -> {per_doc_path}")
 
 
 # ── license ───────────────────────────────────────────────────────────────────
@@ -106,7 +112,7 @@ def license(
         max_docs = lic_cfg.get("max_docs")
 
     click.echo(f"[license] 读取 {input_path} ...")
-    docs = list(read_documents(input_path))
+    docs = list(read_documents(input_path, config=cfg.get("input", {})))
     if max_docs:
         click.echo(f"[license] 仅扫描前 {max_docs} 条（--max-docs）")
 

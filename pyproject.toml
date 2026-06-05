@@ -9,6 +9,7 @@ requires-python = ">=3.10"
 dependencies = [
     # 数据读写 & 统计
     "datatrove[processing,io]>=0.3",
+    "pyarrow>=14",               # Parquet 读取（UFW-L3 等 Parquet 格式语料）
     # HTML/PDF 正文抽取
     "trafilatura>=1.8",
     # 语言识别

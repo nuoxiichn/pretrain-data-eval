@@ -1,18 +1,39 @@
 # Stage 1: 来源审计 + 时间属性
+# 当前配置针对 Ultra-FineWeb-L3（Parquet 格式，字段 uid/content/style）
 
 input:
-  format: auto            # auto | jsonl | parquet | hf
+  format: parquet
+  batch_size: 500          # 每批读取行数（1GB 文件，流式处理）
+  field_map:               # 字段重命名：数据集字段 -> 标准字段
+    uid: doc_id
+    content: text
+    # style 保留在 meta.style（无需映射）
+  path_meta:               # 从路径片段推断字段值（首个匹配生效）
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+  # glob: "*.parquet"      # 目录模式下的文件匹配模式（默认 *.parquet）
+
+# ── 对于 JSONL 格式（如 mock 数据），将 input 改为：
+# input:
+#   format: jsonl
+#   field_map: {}
+#   path_meta: {}
 
 tokenizer:
-  backend: words          # words（空格分词，快速）| hf（HF Tokenizers，精确）
-  hf_name: null           # backend=hf 时必填，例如 "bert-base-uncased"
+  backend: words           # words（空格分词）| hf（HF Tokenizers，更精确）
+  hf_name: null            # backend=hf 时填写，例如 "bert-base-uncased"
+  # 注意：words 对中文文档的 token 数估算误差大，中文语料建议改用 hf
 
 stats:
   percentiles: [25, 50, 75, 90, 95, 99]
 
 license:
-  timeout_per_doc: 30     # ScanCode 每文档超时秒数
-  max_docs: null          # null = 扫描全部；设为整数可限制数量（调试用）
+  timeout_per_doc: 30      # ScanCode 每文档超时秒数
+  max_docs: null           # null = 扫描全部；整数可限制数量（调试用）
 
 output:
   base_dir: outputs/stage1
