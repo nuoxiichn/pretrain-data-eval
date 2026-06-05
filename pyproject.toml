@@ -61,6 +61,11 @@ dev = [
 #   DCLM fasttext — 模型文件：fasttext_oh_eli5.bin（手动下载）
 #   BigCode PII  — git clone https://github.com/bigcode-project/bigcode-dataset
 
+[tool.hatch.build.targets.wheel]
+packages = ["src", "source_audit", "safety", "cleaning", "multilingual",
+            "dedup", "contamination", "quality", "synthetic",
+            "domain", "longctx", "tokenization"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
