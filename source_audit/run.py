@@ -53,14 +53,19 @@ def cli():
 # ── stats ─────────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.option("--input", "input_path", required=True, help="输入 JSONL 路径")
+@click.option("--input", "input_path", required=True, help="输入文件或目录路径")
 @click.option("--dataset", required=True, help="数据集名称（用于输出目录命名）")
 @click.option("--config", "config_path", default="configs/stage1.yaml", show_default=True)
 @click.option("--output-base", default="outputs/stage1", show_default=True)
 @click.option("--output-dir", default=None, help="覆盖自动生成的输出目录")
-def stats(input_path: str, dataset: str, config_path: str, output_base: str, output_dir: str | None):
+@click.option("--input-format", default=None, help="覆盖 yaml 中的 input.format（auto/jsonl/parquet）")
+def stats(input_path: str, dataset: str, config_path: str, output_base: str,
+          output_dir: str | None, input_format: str | None):
     """行 1：文档统计 + 时间字段分析"""
     cfg = _load_config(config_path)
+    input_cfg = dict(cfg.get("input", {}))
+    if input_format:
+        input_cfg["format"] = input_format
     tok_cfg = cfg.get("tokenizer", {})
     tokenize = make_tokenizer(
         backend=tok_cfg.get("backend", "words"),
@@ -68,7 +73,7 @@ def stats(input_path: str, dataset: str, config_path: str, output_base: str, out
     )
 
     click.echo(f"[stats] 读取 {input_path} ...")
-    docs = read_documents(input_path, config=cfg.get("input", {}))
+    docs = read_documents(input_path, config=input_cfg)
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "stats")
     per_doc_path = out_dir / "per_doc.jsonl"
