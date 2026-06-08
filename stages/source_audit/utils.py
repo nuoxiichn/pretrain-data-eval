@@ -1,14 +1,12 @@
 """Stage 1 computation utilities.
 
-Provides three independent computation functions:
+Provides two independent computation functions:
   compute_doc_stats   — row 1: basic corpus statistics
   compute_license     — row 2: ScanCode license/copyright detection
-  record_snapshot     — row 3: DataTrove executor.json snapshot
 """
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import tempfile
@@ -288,14 +286,3 @@ def compute_license(
         "license_type_distribution": dict(license_type_cnt.most_common()),
     }
     return per_doc, summary
-
-
-# ── Row 3: executor.json snapshot ─────────────────────────────────────────────
-
-def record_snapshot(executor_json_path: str) -> dict:
-    """Load and return a DataTrove executor.json for archiving.
-
-    Just reads and returns the JSON — no validation of its contents.
-    """
-    with open(executor_json_path, encoding="utf-8") as f:
-        return json.load(f)
