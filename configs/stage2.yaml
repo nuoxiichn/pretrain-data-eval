@@ -27,9 +27,12 @@ secrets:
   gitleaks_bin: gitleaks     # gitleaks 二进制路径或命令名
 
 toxicity:
-  model_path: /mnt/public/model/detoxify/unbiased-toxic-roberta
-                             # 本地 HF 目录（config.json + pytorch_model.bin），共享区，
-                             # 用 transformers 直接加载（detoxify unbiased RoBERTa）。必填。
+  model_path: /mnt/public/data/models/xlmr-large-toxicity-classifier
+                             # 支持两类模型，自动识别：
+                             #   多标签（detoxify unbiased RoBERTa）→ sigmoid，7 维打分
+                             #   二分类（xlmr-large-toxicity-classifier 等）→ softmax，单维 toxicity
+                             # 备选英文 7 维：/mnt/public/model/detoxify/unbiased-toxic-roberta
+                             # 切换时改此路径即可，无需改代码。
   high_risk_threshold: 0.5   # toxicity 维度超过此值视为高风险
   batch_size: 16             # 推理批大小
 

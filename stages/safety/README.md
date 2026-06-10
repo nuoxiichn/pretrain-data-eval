@@ -10,7 +10,7 @@
 |--------|--------|------|------|
 | `pii` | 行 1（通用文本）+ 行 2（代码语料） | Microsoft Presidio | 60+ 实体类型；通过 `--mode` 切换通用/代码模式 |
 | `secrets` | 行 3 | Gitleaks（二进制） | 高置信度 Secret 扫描，`--no-git` 模式逐文档扫描 |
-| `toxicity` | 行 4 | Detoxify `unbiased` | RoBERTa 7 维打分（toxicity / obscene / threat / …） |
+| `toxicity` | 行 4 | HF 文本分类模型 | 自动识别：多标签（detoxify 7 维）或二分类（xlmr 多语言） |
 
 > **BigCode PII scripts（行 2）**：原始实现需 git clone bigcode-dataset 仓库。
 > 本阶段用 Presidio + 代码专用实体列表（`EMAIL_ADDRESS`, `IP_ADDRESS`, `URL`, `CRYPTO`, `CREDIT_CARD`）近似替代，已覆盖主要模式。
@@ -57,6 +57,8 @@
 ```
 
 ### toxicity
+
+**多标签模型**（detoxify unbiased，英文）：
 ```json
 {
   "scores": {"toxicity": 0.03, "severe_toxicity": 0.01, "obscene": 0.02, "identity_attack": 0.01, "insult": 0.02, "threat": 0.01, "sexual_explicit": 0.01},
@@ -64,17 +66,20 @@
 }
 ```
 
-> ⚠️ **当前仅支持英文。** detoxify unbiased 是纯英文 RoBERTa，对中文及其他语言
-> OOD 失效——非英文文本分数会塌缩到近 0，在UFW上测试结果无意义。
+**二分类模型**（xlmr-large-toxicity-classifier，中英多语言）：
+```json
+{
+  "scores": {"toxicity": 0.85},
+  "flags": {"high_risk": true}
+}
+```
+
+> 模型类型（`model_mode: "binary"` / `"multilabel"`）自动识别，无需手动切换。
+> 切换模型只需改 `configs/stage2.yaml` 中的 `toxicity.model_path`。
 >
-> **TODO（多语言 / 中文毒性）**：
-> - UFW 数据为中英双语，**中文毒性目前是空白**；自研数据可能含更多语种，同样未覆盖。
-> - 现成方案各有短板，暂不接入：detoxify 官方 multilingual 版（XLM-R）只覆盖
->   en/fr/es/it/pt/ru/tr 7 语，**仍不含中文**；多语二分类器（如 textdetox/XLM-R）
->   覆盖中文但精度不足，且丢失英文 7 维细分。
-> - 待解决：找到「精度达标 + 含中文 + 尽量保留 detoxify 7 维范式」的方案，或
->   接受「英文 7 维 + 其他语言二分类红绿灯」的分层折中（详见 `pipeline_overview.md`
->   stage 2 毒性行）。
+> **推荐**：中英语料统一用 `textdetox/xlmr-large-toxicity-classifier`（XLM-RoBERTa-Large，
+> PAN/CLEF 2024 共享任务官方分类器，覆盖 9+ 语言）。纯英文语料如需细粒度维度可用
+> detoxify unbiased。
 
 ## 依赖
 
@@ -82,12 +87,13 @@
 presidio-analyzer>=2.2
 presidio-anonymizer>=2.2
 spacy>=3.7
-transformers>=4.40    # toxicity：加载本地 detoxify unbiased HF 模型
+transformers>=4.40    # toxicity：加载本地 HF 分类模型（detoxify / xlmr / COLD 等）
 ```
 
-毒性模型走本地 HF 目录（`/mnt/public/model/detoxify/unbiased-toxic-roberta`，
-见 `configs/stage2.yaml` 的 `toxicity.model_path`），用 transformers 直接加载，
-**不依赖 detoxify pip 包**（其默认从 GitHub 拉 `.ckpt`，已弃用该链路）。
+毒性模型走本地 HF 目录（见 `configs/stage2.yaml` 的 `toxicity.model_path`），
+用 transformers 直接加载。支持任意 `*ForSequenceClassification` 模型：
+- **多标签**（如 detoxify unbiased）→ sigmoid，输出多维度分数
+- **二分类**（如 xlmr-large-toxicity-classifier、roberta-base-cold）→ softmax，输出单维 toxicity
 
 Presidio 需要 spaCy 语言模型（首次运行自动下载）：
 ```bash

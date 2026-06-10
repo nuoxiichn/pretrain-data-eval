@@ -295,7 +295,7 @@ def compute_toxicity(
     max_length: int = 512,
     on_doc: Callable[[DocResult], None] | None = None,
 ) -> tuple[list[DocResult], dict]:
-    """Classify toxicity with the Detoxify unbiased RoBERTa model.
+    """Classify toxicity — auto-detects binary (xlmr/COLD) vs multi-label (detoxify).
     """
     if not model_path:
         raise RuntimeError(
@@ -303,7 +303,7 @@ def compute_toxicity(
             "toxicity.model_path（如 /mnt/public/model/detoxify/unbiased-toxic-roberta）"
         )
     doc_list = list(docs)
-    predict = _make_hf_predictor(model_path, device=device, max_length=max_length)
+    predict, model_mode = _make_hf_predictor(model_path, device=device, max_length=max_length)
 
     per_doc: list[DocResult] = []
     dim_scores: dict[str, list[float]] = {d: [] for d in _TOXICITY_DIMS}
@@ -343,6 +343,7 @@ def compute_toxicity(
         "high_risk_pct": round(high_risk_count / total, 4) if total else 0.0,
         "high_risk_threshold": high_risk_threshold,
         "model_path": model_path,
+        "model_mode": model_mode,
         "dim_stats": {
             dim: _dim_summary(vals)
             for dim, vals in dim_scores.items()
@@ -352,11 +353,16 @@ def compute_toxicity(
     return per_doc, summary
 
 
-def _make_hf_predictor(model_path: str, *, device: str | None = None, max_length: int = 512):
-    """transformers 后端：加载 HF 目录，返回与 detoxify.predict 同形状的闭包。
+_TOXIC_LABEL_KEYWORDS = {"toxic", "offensive", "risk", "harmful", "hate"}
 
-    detoxify unbiased = RobertaForSequenceClassification + 多标签 sigmoid。
-    config.id2label 给出标签名；我们按 _TOXICITY_DIMS 取需要的 7 维。
+
+def _make_hf_predictor(model_path: str, *, device: str | None = None, max_length: int = 512):
+    """加载 HF 文本分类模型，自动识别二分类（softmax）与多标签（sigmoid）。
+
+    二分类（如 xlmr-large-toxicity-classifier、roberta-base-cold）→ softmax，
+    输出 {"toxicity": [p_toxic, ...]}。
+    多标签（如 detoxify unbiased）→ sigmoid，输出所有 id2label 维度。
+    返回 (predict_fn, model_mode)，mode 为 "binary" 或 "multilabel"。
     """
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -366,6 +372,14 @@ def _make_hf_predictor(model_path: str, *, device: str | None = None, max_length
     tok = AutoTokenizer.from_pretrained(model_path)
     model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device).eval()
     id2label = model.config.id2label
+    is_binary = model.config.num_labels == 2
+
+    toxic_idx = 1
+    if is_binary:
+        for idx_str, label in id2label.items():
+            if any(kw in label.lower() for kw in _TOXIC_LABEL_KEYWORDS):
+                toxic_idx = int(idx_str)
+                break
 
     def predict(texts: list[str]) -> dict[str, list[float]]:
         enc = tok(
@@ -373,13 +387,17 @@ def _make_hf_predictor(model_path: str, *, device: str | None = None, max_length
             max_length=max_length, return_tensors="pt",
         ).to(device)
         with torch.no_grad():
-            probs = torch.sigmoid(model(**enc).logits)
+            logits = model(**enc).logits
+            if is_binary:
+                probs = torch.softmax(logits, dim=-1)
+                return {"toxicity": probs[:, toxic_idx].tolist()}
+            probs = torch.sigmoid(logits)
         out: dict[str, list[float]] = {}
         for idx, label in id2label.items():
             out[label] = probs[:, int(idx)].tolist()
         return out
 
-    return predict
+    return predict, "binary" if is_binary else "multilabel"
 
 
 def _dim_summary(values: list[float]) -> dict:
