@@ -1,0 +1,36 @@
+# Stage 3: 语言识别 + 文本质量审计 + 多语言覆盖
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+langid:
+  model_path: /mnt/public/model/lid.176.bin
+  top_k: 3
+  confidence_threshold: 0.7   # 低于此值标记 low_confidence
+
+quality:                      # Gopher Quality + C4，中英双语适配（jieba 分词 + 阈值调整）
+  filters:                    # 重复检测不在此——归 stage 4 dedup
+    - gopher_quality
+    - c4_quality
+
+extraction:                   # 行 1：抽取质量审计（已清洗文本残留检测）
+  short_stub_chars: 50        # 正文 < 此字符数视为抽取残桩；按字符计对 CJK 更公平
+
+glotlid:
+  model_path: /mnt/public/model/glotlid/model.bin   # GlotLID v3（共享区，fasttext 直接加载）
+  top_k: 3
+  confidence_threshold: 0.7
+
+output:
+  base_dir: outputs/stage3
