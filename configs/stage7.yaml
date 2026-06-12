@@ -1,0 +1,30 @@
+# Stage 7: 合成数据检测
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+binoculars:
+  # 英文默认：Llama-2-7b base + chat（同 tokenizer）
+  observer_model: /mnt/public/model/huggingface/Llama-2-7b-hf
+  performer_model: /mnt/public/model/huggingface/Llama-2-7b-chat-hf
+  # 中文可切换为 Qwen 对（取消注释）：
+  # observer_model: /mnt/public/model/huggingface/Qwen2.5-7B
+  # performer_model: /mnt/public/model/huggingface/Qwen2.5-7B-Instruct
+  threshold: 0.8536           # 分数低于此值判定为 AI 生成（Falcon 原始阈值，换模型后需校准）
+  batch_size: 8               # GPU 推理批大小（两个 7B fp16 ≈ 28 GB，MetaX C500 可用）
+  max_length: 512             # 输入截断长度（token 数）
+  dtype: float16              # float16 / bfloat16 / float32
+
+output:
+  base_dir: outputs/stage7
