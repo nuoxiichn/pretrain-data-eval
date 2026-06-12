@@ -1,0 +1,24 @@
+# Stage 8: 专项能力
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+parsability:
+  language: python
+
+stem:
+  min_keyword_density: 0.001
+
+output:
+  base_dir: outputs/stage8
