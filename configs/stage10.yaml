@@ -1,0 +1,24 @@
+# Stage 10: Tokenization 分析
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+tokenize:
+  tokenizer_path: /mnt/public/model/huggingface/Llama-2-7b-hf
+  unk_threshold: 0.01
+  fertility_threshold: 5.0
+  batch_size: 256
+
+output:
+  base_dir: outputs/stage10
