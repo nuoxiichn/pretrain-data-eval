@@ -15,7 +15,7 @@ input:
       qa: ultrafineweb_qa
 
 tokenize:
-  tokenizer_path: /mnt/public/model/huggingface/Llama-2-7b-hf
+  tokenizer_path: /mnt/public/model/huggingface/Qwen3-4B-Base   # 与 stage1 共享，中文覆盖优于 Llama-2 SP
   unk_threshold: 0.01
   fertility_threshold: 5.0
   batch_size: 256

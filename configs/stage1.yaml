@@ -24,9 +24,10 @@ input:
 #   path_meta: {}
 
 tokenizer:
-  backend: words           # words（空格分词）| hf（HF Tokenizers，更精确）
-  hf_name: null            # backend=hf 时填写，例如 "bert-base-uncased"
-  # 注意：words 对中文文档的 token 数估算误差大，中文语料建议改用 hf
+  backend: hf              # hf（默认，使用 HF Tokenizers）| words（空格分词，仅 mock smoke 用，对 CJK 严重失真）
+  path: /mnt/public/model/huggingface/Qwen3-4B-Base    # backend=hf 时填本地 tokenizer.json/模型目录/hub 名
+  # 注：与 stage10 共享同一 tokenizer，跑 `stats --coalesce-stage10` 可一次扫描产两份 summary
+  # 注：token 数 = Qwen3 BPE token 数（不是 words），length_buckets 4K/8K/.../256K+ 因此是 token 桶
 
 stats:
   percentiles: [25, 50, 75, 90, 95, 99]

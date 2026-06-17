@@ -6,7 +6,7 @@
 
 | 阶段 | 维度/指标 | 输出字段 | 实现 | 状态 |
 |------|-----------|--------------|------|------|
-| **1 来源审计 + 时间属性** | 文档统计：字符 / token / 长度分桶 / 域名 / 声明语种 / 来源 / 时间字段完整性与年月分布 | `total_docs` / `char_stats` / `token_stats` / `length_buckets`（4K/8K/32K/128K/256K+）/ `domain_distribution` / `language_distribution` / `source_distribution` / `timestamp.{present, missing, present_pct, year_month_distribution}` | 自实现（`source_audit/utils.py::compute_doc_stats`，标准库 + numpy）；token 计数后端可选 `words`（空格分词）或 `hf`（HuggingFace `tokenizers`） | done |
+| **1 来源审计 + 时间属性** | 文档统计：字符 / token / 长度分桶 / 域名 / 声明语种 / 来源 / 时间字段完整性与年月分布 | `total_docs` / `char_stats` / `token_stats` / `length_buckets`（4K/8K/32K/128K/256K+，以 **token** 数为桶）/ `domain_distribution` / `language_distribution` / `source_distribution` / `timestamp.{present, missing, present_pct, year_month_distribution}` | 自实现（`source_audit/utils.py::DocStatsAggregator`，标准库 + numpy）；token 后端默认 `hf`（Qwen3-4B-Base，vocab 151936，与 stage10 共享，可 `--coalesce-stage10` 一次扫描产两份 summary）；`words` 仅 mock smoke 用 | done |
 | | 许可证检测 / 版权声明 | `total_docs_scanned` / `docs_with_license` / `hit_pct` / `license_type_distribution` | 调用 ScanCode Toolkit (`scancode.api`) | done（功能可用，未在 UFW-L3 全量跑——合成数据无许可证字段） |
 | | 处理参数快照（pipeline 可复现性） | — | — | SKIP（上游清洗/合成工具链不固定，无法依赖 DataTrove `executor.json` 等特定产物） |
 | | 样本级处理 diff | — | — | SKIP（参考 Data-Juicer `Tracer`，与"成品审计"定位冲突） |
@@ -39,7 +39,7 @@
 | **8 专项能力** | 代码可解析率 / 语法错误严重度（默认 Python） | `total_docs` / `parsed_docs` / `has_error_docs` / `has_error_pct` / `unparsable_docs` / `error_ratio` 分布 | 调用 tree-sitter (`tree_sitter` + `tree_sitter_python`) | done（方法论上对自然语言数据无意义，UFW-L3 命中率 ~100%） |
 | | STEM 学科分布 | `total_docs` / `stem_docs` / `stem_pct` / `subject_distribution` / `primary_subject_top10` | 自实现（关键词词表 + 密度阈值），仅含英文关键词 | done（英文有效，中文需多语词表） |
 | **9 长上下文** | 训练配置审计（packing 边界三参数） | `parameters.{reset_position_ids, reset_attention_mask, eod_mask_loss}.{found, value, valid}` / `config_valid` / `missing_params` / `invalid_params` | 自实现 yaml / json / 正则三路解析（针对 Megatron-LM `--reset-position-ids` / `--reset-attention-mask` / `--eod-mask-loss`），不依赖 Megatron 包 | done（不消费数据集，秒级） |
-| **10 Tokenization** | Token/char fertility / UNK 率 / 代码 & LaTeX token 膨胀率 | `total_docs` / `fertility_stats`（mean/p50/p95 等） / `unk_stats.{total_unk_tokens, overall_unk_rate, docs_with_unk, ...}` / `code_stats.docs_with_code` / `latex_stats.docs_with_latex` / `high_unk_rate_docs` / `high_fertility_docs` | 调用 HuggingFace `tokenizers.Tokenizer`（参照任意本地 tokenizer.json，默认 Llama-2 SentencePiece） | done |
+| **10 Tokenization** | Token/char fertility / UNK 率 / 代码 & LaTeX token 膨胀率 | `total_docs` / `fertility_stats`（mean/p50/p95 等） / `unk_stats.{total_unk_tokens, overall_unk_rate, docs_with_unk, ...}` / `code_stats.docs_with_code` / `latex_stats.docs_with_latex` / `high_unk_rate_docs` / `high_fertility_docs` | 调用 HuggingFace `tokenizers.Tokenizer`（默认 `/mnt/public/model/huggingface/Qwen3-4B-Base`，与 stage1 共享）；可与 stage1 stats 通过 `--coalesce-stage10` 一次扫描共出两份 summary | done |
 
 ---
 

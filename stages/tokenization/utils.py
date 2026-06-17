@@ -8,37 +8,13 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from pathlib import Path
 from typing import Callable, Iterable
 
 import numpy as np
 
 from src.reader import Document
 from src.schema import DocResult
-
-
-# ── Tokenizer loading ────────────────────────────────────────────────────────
-
-def _load_tokenizer(tokenizer_path: str):
-    """Load a HF Tokenizer from a local path or hub name."""
-    from tokenizers import Tokenizer
-
-    path = Path(tokenizer_path)
-    if path.is_file():
-        return Tokenizer.from_file(str(path))
-    if path.is_dir():
-        tok_file = path / "tokenizer.json"
-        if tok_file.exists():
-            return Tokenizer.from_file(str(tok_file))
-    return Tokenizer.from_pretrained(tokenizer_path)
-
-
-def _find_unk_id(tokenizer) -> int | None:
-    for unk_str in ("[UNK]", "<unk>", "<UNK>"):
-        uid = tokenizer.token_to_id(unk_str)
-        if uid is not None:
-            return uid
-    return None
+from src.tokenizer_loader import find_unk_id, load_tokenizer
 
 
 # ── Text segment extraction ──────────────────────────────────────────────────
@@ -81,6 +57,17 @@ def _dist_stats(values: list[float], pcts: tuple = (5, 25, 50, 75, 95)) -> dict:
 
 # ── Main compute ─────────────────────────────────────────────────────────────
 
+def _iter_batches(docs: Iterable[Document], batch_size: int):
+    batch: list[Document] = []
+    for d in docs:
+        batch.append(d)
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 def compute_tokenization(
     docs: Iterable[Document],
     tokenizer_path: str,
@@ -88,18 +75,20 @@ def compute_tokenization(
     fertility_threshold: float = 5.0,
     batch_size: int = 256,
     on_doc: Callable[[DocResult], None] | None = None,
+    extra_per_doc: Callable[[Document, int, int], None] | None = None,
 ) -> tuple[list[DocResult], dict]:
     """Compute tokenization statistics for each document.
 
-    Returns (per_doc_results, summary_dict).
-    When on_doc is provided, results are streamed and the returned list is empty.
-    """
-    doc_list = list(docs)
-    if not doc_list:
-        return [], {"total_docs": 0}
+    Streams batches of size `batch_size` without materializing the whole corpus.
 
-    tokenizer = _load_tokenizer(tokenizer_path)
-    unk_id = _find_unk_id(tokenizer)
+    When on_doc is provided, results are streamed and the returned list is empty.
+    When extra_per_doc is provided, it is called for each document as
+    `extra_per_doc(doc, token_count, char_count)` — used by stage1's
+    DocStatsAggregator to share one tokenization pass.
+    Returns (per_doc_results, summary_dict).
+    """
+    tokenizer = load_tokenizer(tokenizer_path)
+    unk_id = find_unk_id(tokenizer)
 
     per_doc: list[DocResult] = []
     fertilities: list[float] = []
@@ -114,9 +103,9 @@ def compute_tokenization(
     docs_with_code = 0
     docs_with_latex = 0
     docs_with_unk = 0
+    total = 0
 
-    for batch_start in range(0, len(doc_list), batch_size):
-        batch = doc_list[batch_start : batch_start + batch_size]
+    for batch in _iter_batches(docs, batch_size):
         texts = [str(d.get("text") or "") for d in batch]
         encodings = tokenizer.encode_batch(texts)
 
@@ -161,6 +150,9 @@ def compute_tokenization(
             token_count = len(enc.ids)
             char_count = len(text)
             fertility = token_count / char_count if char_count > 0 else 0.0
+
+            if extra_per_doc is not None:
+                extra_per_doc(doc, token_count, char_count)
 
             unk_count = 0
             if unk_id is not None:
@@ -221,8 +213,11 @@ def compute_tokenization(
             if latex_chars > 0:
                 docs_with_latex += 1
                 latex_fertilities.append(latex_fertility)
+            total += 1
 
-    total = len(doc_list)
+    if total == 0:
+        return per_doc, {"total_docs": 0, "tokenizer_path": tokenizer_path}
+
     per_lang = {}
     for lang, ferts in sorted(lang_fertilities.items()):
         per_lang[lang] = {
