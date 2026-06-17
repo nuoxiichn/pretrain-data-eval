@@ -21,6 +21,7 @@ import click
 import yaml
 
 from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_per_doc, write_summary
 from stages.source_audit.utils import (
     compute_doc_stats,
@@ -99,6 +100,9 @@ def stats(input_path: str, dataset: str, config_path: str, output_base: str,
 @click.option("--output-base", default="outputs/stage1", show_default=True)
 @click.option("--output-dir", default=None)
 @click.option("--max-docs", default=None, type=int, help="限制扫描文档数（调试用）")
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--input-format", default=None, help="覆盖 yaml 中的 input.format（auto/jsonl/parquet）")
 def license(
     input_path: str,
@@ -107,6 +111,8 @@ def license(
     output_base: str,
     output_dir: str | None,
     max_docs: int | None,
+    sample_mode: str,
+    seed: int,
     input_format: str | None,
 ):
     """行 2：ScanCode 许可证与版权检测"""
@@ -120,11 +126,12 @@ def license(
     input_cfg = dict(cfg.get("input", {}))
     if input_format:
         input_cfg["format"] = input_format
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        click.echo(f"[license] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[license] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
-    per_doc, summary = compute_license(docs, timeout_per_doc=timeout, max_docs=max_docs)
+    per_doc, summary = compute_license(docs, timeout_per_doc=timeout, max_docs=None)
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "license")
     pd_path = write_per_doc(per_doc, out_dir)

@@ -21,6 +21,7 @@ import click
 import yaml
 
 from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_summary
 from stages.contamination.benchmarks import load_benchmarks
 from stages.contamination.utils import (
@@ -58,8 +59,11 @@ def cli():
 @click.option("--output-dir", default=None, help="覆盖自动生成的输出目录")
 @click.option("--input-format", default=None, help="覆盖 yaml 中的 input.format")
 @click.option("--max-docs", default=None, type=int, help="限制扫描文档数（调试用）")
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 def exact(input_path, dataset, config_path, output_base, output_dir,
-          input_format, max_docs):
+          input_format, max_docs, sample_mode, seed):
     """精确污染检测（文档级 + 段落级 MD5 哈希对比 benchmark）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -74,10 +78,10 @@ def exact(input_path, dataset, config_path, output_base, output_dir,
     click.echo(f"[exact] 已加载 {len(bench_items)} 个 benchmark，共 {total_bench} 条样本")
 
     click.echo(f"[exact] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[exact] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[exact] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "exact")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -116,10 +120,13 @@ def exact(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--ngram-size", default=None, type=int)
 @click.option("--jaccard-threshold", default=None, type=float)
 def code_near(input_path, dataset, config_path, output_base, output_dir,
-              input_format, max_docs, ngram_size, jaccard_threshold):
+              input_format, max_docs, sample_mode, seed, ngram_size, jaccard_threshold):
     """代码 benchmark 近重复检测（字符级 MinHash + LSH）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -132,10 +139,10 @@ def code_near(input_path, dataset, config_path, output_base, output_dir,
     bench_items = load_benchmarks(bench_cfg)
 
     click.echo(f"[code-near] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[code-near] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[code-near] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     _ngram = ngram_size or cn_cfg.get("ngram_size", 5)
     _threshold = jaccard_threshold if jaccard_threshold is not None else cn_cfg.get("jaccard_threshold", 0.85)
@@ -186,8 +193,11 @@ def code_near(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 def code_ast(input_path, dataset, config_path, output_base, output_dir,
-             input_format, max_docs):
+             input_format, max_docs, sample_mode, seed):
     """代码 AST 结构污染检测（tree-sitter 指纹）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -200,10 +210,10 @@ def code_ast(input_path, dataset, config_path, output_base, output_dir,
     bench_items = load_benchmarks(bench_cfg)
 
     click.echo(f"[code-ast] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[code-ast] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[code-ast] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     _languages = ast_cfg.get("languages", ["python"])
     _threshold = ast_cfg.get("fingerprint_jaccard_threshold", 0.90)

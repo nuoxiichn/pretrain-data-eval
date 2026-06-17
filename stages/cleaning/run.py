@@ -23,6 +23,7 @@ import click
 import yaml
 
 from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_summary
 from stages.cleaning.utils import (
     compute_extraction_audit,
@@ -60,8 +61,12 @@ def cli():
 @click.option("--input-format", default=None)
 @click.option("--model", "model_path", default=None, help="lid.176.bin 路径（覆盖 yaml）")
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True, help="抽样策略：random=蓄水池, head=取前 N")
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True,
+              help="抽样随机种子（仅 random 模式生效）")
 def langid(input_path, dataset, config_path, output_base, output_dir,
-           input_format, model_path, max_docs):
+           input_format, model_path, max_docs, sample_mode, seed):
     """行 2: fastText 语言识别"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -73,10 +78,10 @@ def langid(input_path, dataset, config_path, output_base, output_dir,
         raise click.UsageError("需要指定 --model 或在 configs/stage3.yaml 中设置 langid.model_path")
 
     click.echo(f"[langid] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[langid] 仅处理前 {max_docs} 条")
+        click.echo(f"[langid] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "langid")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -112,8 +117,11 @@ def langid(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--input-format", default=None)
 @click.option("--model", "model_path", default=None, help="GlotLID 模型路径（覆盖 yaml）")
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 def glotlid(input_path, dataset, config_path, output_base, output_dir,
-            input_format, model_path, max_docs):
+            input_format, model_path, max_docs, sample_mode, seed):
     """行 3: GlotLID v3 细粒度语种-脚本识别"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -128,10 +136,10 @@ def glotlid(input_path, dataset, config_path, output_base, output_dir,
         )
 
     click.echo(f"[glotlid] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[glotlid] 仅处理前 {max_docs} 条")
+        click.echo(f"[glotlid] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "glotlid")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -165,8 +173,11 @@ def glotlid(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 def langcross(input_path, dataset, config_path, output_base, output_dir,
-              input_format, max_docs):
+              input_format, max_docs, sample_mode, seed):
     """交叉核对：lid.176(粗) vs GlotLID(细)，暴露被吸收的低资源语种"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -181,10 +192,10 @@ def langcross(input_path, dataset, config_path, output_base, output_dir,
         )
 
     click.echo(f"[langcross] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[langcross] 仅处理前 {max_docs} 条")
+        click.echo(f"[langcross] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "langcross")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -220,9 +231,12 @@ def langcross(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--filters", default=None, help="逗号分隔的过滤器列表，如 gopher_quality,c4_quality")
 def quality(input_path, dataset, config_path, output_base, output_dir,
-            input_format, max_docs, filters):
+            input_format, max_docs, sample_mode, seed, filters):
     """行 4: 质量过滤器（自实现 Gopher/C4 信号，只读模式）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -232,10 +246,10 @@ def quality(input_path, dataset, config_path, output_base, output_dir,
     filter_names = filters.split(",") if filters else q_cfg.get("filters")
 
     click.echo(f"[quality] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[quality] 仅处理前 {max_docs} 条")
+        click.echo(f"[quality] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "quality")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -263,8 +277,11 @@ def quality(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 def extraction(input_path, dataset, config_path, output_base, output_dir,
-               input_format, max_docs):
+               input_format, max_docs, sample_mode, seed):
     """行 1: 抽取质量审计（已清洗文本的 HTML/markup/boilerplate/mojibake 残留）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -273,10 +290,10 @@ def extraction(input_path, dataset, config_path, output_base, output_dir,
     ex_cfg = cfg.get("extraction", {})
 
     click.echo(f"[extraction] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[extraction] 仅处理前 {max_docs} 条")
+        click.echo(f"[extraction] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "extraction")
     per_doc_path = out_dir / "per_doc.jsonl"

@@ -6,7 +6,6 @@ Usage:
 
 from __future__ import annotations
 
-import itertools
 import json
 import sys
 import time
@@ -21,6 +20,7 @@ import click
 import yaml
 
 from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_summary
 from stages.tokenization.utils import compute_tokenization
 
@@ -49,13 +49,16 @@ def cli():
 @click.option("--output-dir", default=None, help="覆盖自动生成的输出目录")
 @click.option("--input-format", default=None, help="覆盖 yaml 中的 input.format")
 @click.option("--max-docs", default=None, type=int, help="限制扫描文档数（调试用）")
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--tokenizer", "tokenizer_path", default=None, help="覆盖 yaml 中的 tokenizer 路径")
 @click.option("--unk-threshold", default=None, type=float, help="UNK 率阈值")
 @click.option("--fertility-threshold", default=None, type=float, help="fertility 阈值")
 @click.option("--batch-size", default=None, type=int, help="encode_batch 批大小")
 def tokenize(
     input_path, dataset, config_path, output_base, output_dir,
-    input_format, max_docs, tokenizer_path, unk_threshold,
+    input_format, max_docs, sample_mode, seed, tokenizer_path, unk_threshold,
     fertility_threshold, batch_size,
 ):
     """Token/char 比 / UNK 率 / 语种 fertility / 代码公式 token 膨胀率"""
@@ -77,12 +80,10 @@ def tokenize(
     bs = batch_size or tok_cfg.get("batch_size", 256)
 
     click.echo(f"[tokenize] 读取 {input_path} ...")
-    doc_iter = read_documents(input_path, config=input_cfg)
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = list(itertools.islice(doc_iter, max_docs))
-        click.echo(f"[tokenize] 仅扫描前 {max_docs} 条（--max-docs）")
-    else:
-        docs = list(doc_iter)
+        click.echo(f"[tokenize] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
     click.echo(f"[tokenize] 共 {len(docs)} 文档，tokenizer={tok_path}")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "tokenize")

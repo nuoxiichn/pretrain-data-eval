@@ -22,6 +22,7 @@ import click
 import yaml
 
 from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_per_doc, write_summary
 from stages.dedup.utils import (
     compute_exact_dedup,
@@ -59,10 +60,13 @@ def cli():
 @click.option("--output-dir", default=None, help="覆盖自动生成的输出目录")
 @click.option("--input-format", default=None, help="覆盖 yaml 中的 input.format")
 @click.option("--max-docs", default=None, type=int, help="限制扫描文档数（调试用）")
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True, help="抽样策略（注：dedup 用 random 会破坏单文件重复统计语义；调试可用）")
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--paragraph-sep", default=None, help="覆盖 yaml 中的 exact.paragraph_sep")
 @click.option("--min-para-chars", default=None, type=int, help="覆盖 yaml 中的 exact.min_para_chars")
 def exact(input_path, dataset, config_path, output_base, output_dir,
-          input_format, max_docs, paragraph_sep, min_para_chars):
+          input_format, max_docs, sample_mode, seed, paragraph_sep, min_para_chars):
     """MD5 精确去重（文档级 + 段落级）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -71,10 +75,10 @@ def exact(input_path, dataset, config_path, output_base, output_dir,
     exact_cfg = cfg.get("exact", {})
 
     click.echo(f"[exact] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[exact] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[exact] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "exact")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -110,13 +114,16 @@ def exact(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--num-hashes", default=None, type=int)
 @click.option("--ngram-size", default=None, type=int)
 @click.option("--jaccard-threshold", default=None, type=float)
 @click.option("--num-bands", default=None, type=int)
 @click.option("--band-size", default=None, type=int)
 def minhash(input_path, dataset, config_path, output_base, output_dir,
-            input_format, max_docs, num_hashes, ngram_size,
+            input_format, max_docs, sample_mode, seed, num_hashes, ngram_size,
             jaccard_threshold, num_bands, band_size):
     """MinHash + LSH 近重复检测（word n-gram）"""
     cfg = _load_config(config_path)
@@ -126,10 +133,10 @@ def minhash(input_path, dataset, config_path, output_base, output_dir,
     mh_cfg = cfg.get("minhash", {})
 
     click.echo(f"[minhash] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[minhash] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[minhash] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     _num_hashes = num_hashes or mh_cfg.get("num_hashes", 112)
     _ngram_size = ngram_size or mh_cfg.get("ngram_size", 5)
@@ -186,11 +193,14 @@ def minhash(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--ngram-size", default=None, type=int, help="词级 n-gram 大小，默认 13")
 @click.option("--overlap-threshold", default=None, type=float,
               help="段落 shingle 重叠率阈值，默认 0.5")
 def ngram(input_path, dataset, config_path, output_base, output_dir,
-          input_format, max_docs, ngram_size, overlap_threshold):
+          input_format, max_docs, sample_mode, seed, ngram_size, overlap_threshold):
     """段落级 N-gram 重复检测（Dolma-style 审计，无需 dolma 二进制）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -205,10 +215,10 @@ def ngram(input_path, dataset, config_path, output_base, output_dir,
     _min_para_chars = exact_cfg.get("min_para_chars", 50)
 
     click.echo(f"[ngram] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[ngram] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[ngram] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     click.echo(f"[ngram] ngram_size={_ngram_size}, overlap_threshold={_overlap_threshold}")
 
@@ -248,6 +258,9 @@ def ngram(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--model", "model_path", default=None, help="embedding 模型路径，默认 bge-m3")
 @click.option("--eps", default=None, type=float, help="cos 阈值 = 1 - eps，默认 0.07")
 @click.option("--batch-size", default=None, type=int, help="编码批大小")
@@ -255,7 +268,7 @@ def ngram(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--sim-block", default=None, type=int, help="相似度分块行数（控制显存）")
 @click.option("--device", default=None, help="cuda | cpu")
 def semdedup(input_path, dataset, config_path, output_base, output_dir,
-             input_format, max_docs, model_path, eps, batch_size,
+             input_format, max_docs, sample_mode, seed, model_path, eps, batch_size,
              max_length, sim_block, device):
     """Embedding 语义重复检测（bge-m3 + 余弦相似度聚簇）"""
     cfg = _load_config(config_path)
@@ -272,10 +285,10 @@ def semdedup(input_path, dataset, config_path, output_base, output_dir,
     _device = device or sd_cfg.get("device", "cuda")
 
     click.echo(f"[semdedup] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[semdedup] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[semdedup] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     click.echo(
         f"[semdedup] model={_model}, eps={_eps} (cos≥{1 - _eps:.3f}), "

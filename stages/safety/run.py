@@ -21,6 +21,7 @@ import click
 import yaml
 
 from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_per_doc, write_summary
 from stages.safety.utils import compute_pii, compute_secrets, compute_toxicity
 
@@ -58,8 +59,12 @@ def cli():
 @click.option("--language", default=None, help="覆盖 yaml 中的 pii.language（en/zh/…）")
 @click.option("--spacy-model", "spacy_model", default=None, help="覆盖 yaml 中的 pii.spacy_model")
 @click.option("--max-docs", default=None, type=int, help="限制扫描文档数（调试用）")
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True, help="抽样策略：random=蓄水池, head=取前 N")
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True,
+              help="抽样随机种子（仅 random 模式生效）")
 def pii(input_path, dataset, config_path, output_base, output_dir,
-        input_format, mode, language, spacy_model, max_docs):
+        input_format, mode, language, spacy_model, max_docs, sample_mode, seed):
     """行 1+2: Presidio PII 检测"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -68,10 +73,10 @@ def pii(input_path, dataset, config_path, output_base, output_dir,
     pii_cfg = cfg.get("pii", {})
 
     click.echo(f"[pii] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[pii] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[pii] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "pii")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -108,8 +113,11 @@ def pii(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 def secrets(input_path, dataset, config_path, output_base, output_dir,
-            input_format, max_docs):
+            input_format, max_docs, sample_mode, seed):
     """行 3: Gitleaks Secret 扫描"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -118,10 +126,10 @@ def secrets(input_path, dataset, config_path, output_base, output_dir,
     sec_cfg = cfg.get("secrets", {})
 
     click.echo(f"[secrets] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[secrets] 仅扫描前 {max_docs} 条（--max-docs）")
+        click.echo(f"[secrets] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "secrets")
     per_doc, summary = compute_secrets(
@@ -148,9 +156,12 @@ def secrets(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--output-dir", default=None)
 @click.option("--input-format", default=None)
 @click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 @click.option("--device", default=None, help="cuda/cpu，默认自动检测（仅 HF model_path 后端用）")
 def toxicity(input_path, dataset, config_path, output_base, output_dir,
-             input_format, max_docs, device):
+             input_format, max_docs, sample_mode, seed, device):
     """行 4: Detoxify 毒性分类"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
@@ -159,10 +170,10 @@ def toxicity(input_path, dataset, config_path, output_base, output_dir,
     tox_cfg = cfg.get("toxicity", {})
 
     click.echo(f"[toxicity] 读取 {input_path} ...")
-    docs = list(read_documents(input_path, config=input_cfg))
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = docs[:max_docs]
-        click.echo(f"[toxicity] 仅处理前 {max_docs} 条（--max-docs）")
+        click.echo(f"[toxicity] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "toxicity")
     per_doc_path = out_dir / "per_doc.jsonl"

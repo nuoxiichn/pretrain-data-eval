@@ -6,7 +6,6 @@ Usage:
 
 from __future__ import annotations
 
-import itertools
 import json
 import sys
 import time
@@ -21,6 +20,7 @@ import click
 import yaml
 
 from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_summary
 from stages.synthetic.utils import compute_binoculars
 
@@ -60,10 +60,13 @@ def cli():
 @click.option("--device", default=None, help="cuda/cpu，默认自动检测")
 @click.option("--dtype", default=None, type=click.Choice(["float16", "bfloat16", "float32"]))
 @click.option("--max-docs", default=None, type=int, help="限制扫描文档数（调试用）")
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True, help="抽样策略：random=蓄水池, head=取前 N")
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
 def binoculars(
     input_path, dataset, config_path, output_base, output_dir,
     input_format, observer_model, performer_model, threshold,
-    batch_size, max_length, device, dtype, max_docs,
+    batch_size, max_length, device, dtype, max_docs, sample_mode, seed,
 ):
     """AI 生成文本检测（Binoculars observer/performer 双模型对比）"""
     cfg = _load_config(config_path)
@@ -86,12 +89,10 @@ def binoculars(
     dt = dtype or bino_cfg.get("dtype", "float16")
 
     click.echo(f"[binoculars] 读取 {input_path} ...")
-    doc_iter = read_documents(input_path, config=input_cfg)
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
     if max_docs:
-        docs = list(itertools.islice(doc_iter, max_docs))
-        click.echo(f"[binoculars] 仅扫描前 {max_docs} 条（--max-docs）")
-    else:
-        docs = list(doc_iter)
+        click.echo(f"[binoculars] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
     click.echo(f"[binoculars] 共 {len(docs)} 文档，observer={obs_path}, performer={perf_path}")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "binoculars")
