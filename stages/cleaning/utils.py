@@ -345,7 +345,7 @@ _BOILERPLATE_ZH = (
     "转载请注明", "点击这里", "阅读更多", "下一页", "上一页", "关注我们",
     "扫描二维码", "免责声明",
 )
-_BOILERPLATE_EN_RE = _re.compile("|".join(_BOILERPLATE_EN))
+_BOILERPLATE_EN_RE = _re.compile("|".join(_BOILERPLATE_EN), _re.IGNORECASE)
 _BOILERPLATE_ZH_RE = _re.compile("|".join(_BOILERPLATE_ZH))
 
 
@@ -372,7 +372,6 @@ def compute_extraction_audit(
     for doc in docs:
         text = str(doc.get("text") or "")
         n_chars = len(text)
-        low = text.lower()
 
         html_tags = len(_HTML_TAG_RE.findall(text))
         html_entities = len(_HTML_ENTITY_RE.findall(text))
@@ -380,9 +379,9 @@ def compute_extraction_audit(
         urls = len(_URL_RE.findall(text))
         mojibake = text.count(_REPLACEMENT_CHAR)
 
-        boiler = _BOILERPLATE_EN_RE.findall(low) + _BOILERPLATE_ZH_RE.findall(text)
+        boiler = _BOILERPLATE_EN_RE.findall(text) + _BOILERPLATE_ZH_RE.findall(text)
         for ph in boiler:
-            boiler_phrase_counter[ph] += 1
+            boiler_phrase_counter[ph.lower()] += 1
 
         has_html = html_tags > 0 or html_entities > 0
         has_boiler = len(boiler) > 0
