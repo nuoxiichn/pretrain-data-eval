@@ -10,3 +10,6 @@ dist/
 *.safetensors
 *.pt
 *.ckpt
+
+# 含命中原文片段的案例文件，不进库
+stages/safety/hit_examples.md
