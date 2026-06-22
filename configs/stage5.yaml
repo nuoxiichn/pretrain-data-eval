@@ -1,0 +1,72 @@
+# Stage 5: 污染检测
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+# 通用 benchmark 加载配置
+# 可自由增删条目，填入任意 HuggingFace dataset name + split + text_field 即可
+benchmarks:
+  cache_dir: /mnt/public/data
+  datasets:
+    - name: cais/mmlu
+      subset: all
+      split: test
+      text_field: question
+      label: mmlu
+    - name: Rowan/hellaswag
+      split: validation
+      text_field: ctx
+      label: hellaswag
+    - name: allenai/ai2_arc
+      subset: ARC-Challenge
+      split: test
+      text_field: question
+      label: arc_challenge
+    - name: tatsu-lab/alpaca_eval
+      split: eval
+      text_field: instruction
+      label: alpaca_eval
+    - name: openai/openai_humaneval
+      split: test
+      text_field: prompt
+      code_field: canonical_solution
+      label: humaneval
+    - name: google-research-datasets/mbpp
+      split: test
+      text_field: text
+      code_field: code
+      label: mbpp
+    - name: openai/gsm8k
+      split: test
+      text_field: question
+      label: gsm8k
+
+exact:
+  paragraph_sep: "\n\n"
+  min_para_chars: 50
+
+code_near:
+  ngram_size: 5             # 字符级 5-gram
+  jaccard_threshold: 0.85
+  num_hashes: 128
+  num_bands: 16
+  band_size: 8
+
+code_ast:
+  languages:
+    - python
+  fingerprint_jaccard_threshold: 0.90
+
+output:
+  base_dir: outputs/stage5

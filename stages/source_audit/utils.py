@@ -1,14 +1,12 @@
 """Stage 1 computation utilities.
 
-Provides three independent computation functions:
+Provides two independent computation functions:
   compute_doc_stats   — row 1: basic corpus statistics
   compute_license     — row 2: ScanCode license/copyright detection
-  record_snapshot     — row 3: DataTrove executor.json snapshot
 """
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import tempfile
@@ -21,23 +19,25 @@ import numpy as np
 
 from src.reader import Document
 from src.schema import DocResult
+from src.tokenizer_loader import load_tokenizer
 
 
 # ── Tokenizer ─────────────────────────────────────────────────────────────────
 
-def make_tokenizer(backend: str = "words", hf_name: str | None = None) -> Callable[[str], int]:
+def make_tokenizer(backend: str = "words", path: str | None = None) -> Callable[[str], int]:
     """Return a callable text -> token count.
 
-    backend="words"  : whitespace split (fast; suitable for European languages)
-    backend="hf"     : HF Tokenizers (accurate; requires hf_name)
+    backend="words"  : whitespace split (fast; suitable for European languages,
+                       INACCURATE for CJK — only use for mock/smoke tests).
+    backend="hf"     : HF Tokenizers; `path` may be a local tokenizer.json,
+                       a local model dir, or a hub name. Required when backend="hf".
     """
     if backend == "words":
         return lambda text: len(text.split())
     if backend == "hf":
-        if not hf_name:
-            raise ValueError("hf_name is required when backend='hf'")
-        from tokenizers import Tokenizer
-        tok = Tokenizer.from_pretrained(hf_name)
+        if not path:
+            raise ValueError("path is required when backend='hf'")
+        tok = load_tokenizer(path)
         return lambda text: len(tok.encode(text).ids)
     raise ValueError(f"Unknown tokenizer backend: {backend!r}")
 
@@ -116,59 +116,60 @@ def _group_table(doc_cnt: Counter, tok_cnt: Counter, total_toks: int) -> dict:
 
 # ── Row 1: document statistics ────────────────────────────────────────────────
 
-def compute_doc_stats(
-    docs: Iterable[Document],
-    tokenize: Callable[[str], int],
-    on_doc: Callable[[DocResult], None] | None = None,
-) -> tuple[list[DocResult], dict]:
-    """Compute corpus-level and per-document statistics.
+class DocStatsAggregator:
+    """Streaming aggregator for corpus-level + per-doc stats.
 
-    on_doc: if provided, called for each DocResult (streaming mode for large
-            corpora). The returned per_doc list will be empty in this case.
-    Returns (per_doc_results, summary_dict).
+    `add(doc, n_tokens)` consumes one document's already-counted token total
+    and returns its DocResult; `finalize()` produces the summary dict.
+    Used standalone by compute_doc_stats and as a hook by stage1 stats'
+    --coalesce-stage10 mode (token count comes from the stage10 pass).
     """
-    per_doc: list[DocResult] = []
-    n_docs = 0
-    char_counts: list[int] = []
-    tok_counts: list[int] = []
-    bucket_cnt: Counter = Counter()
-    domain_docs: Counter = Counter()
-    domain_toks: Counter = Counter()
-    lang_docs: Counter = Counter()
-    lang_toks: Counter = Counter()
-    src_docs: Counter = Counter()
-    src_toks: Counter = Counter()
-    ts_present = 0
-    ts_missing = 0
-    ym_dist: Counter = Counter()
 
-    for doc in docs:
+    def __init__(self, percentiles: tuple = (25, 50, 75, 90, 95, 99)) -> None:
+        self._pcts = percentiles
+        self.n_docs = 0
+        self.char_counts: list[int] = []
+        self.tok_counts: list[int] = []
+        self.bucket_cnt: Counter = Counter()
+        self.domain_docs: Counter = Counter()
+        self.domain_toks: Counter = Counter()
+        self.lang_docs: Counter = Counter()
+        self.lang_toks: Counter = Counter()
+        self.src_docs: Counter = Counter()
+        self.src_toks: Counter = Counter()
+        self.ts_present = 0
+        self.ts_missing = 0
+        self.ym_dist: Counter = Counter()
+
+    def add(self, doc: Document, n_tokens: int) -> DocResult:
         text: str = doc.get("text") or ""  # type: ignore[assignment]
         nc = len(text)
-        nt = tokenize(text)
+        nt = n_tokens
         bucket = get_length_bucket(nt)
         domain = extract_domain(doc.get("url"))  # type: ignore[arg-type]
         lang = doc.get("language") or "(unknown)"
         src = doc.get("source") or "(unknown)"
         ts = parse_timestamp(doc.get("timestamp"))  # type: ignore[arg-type]
 
-        char_counts.append(nc)
-        tok_counts.append(nt)
-        bucket_cnt[bucket] += 1
-        domain_docs[domain] += 1
-        domain_toks[domain] += nt
-        lang_docs[lang] += 1
-        lang_toks[lang] += nt
-        src_docs[src] += 1
-        src_toks[src] += nt
+        self.char_counts.append(nc)
+        self.tok_counts.append(nt)
+        self.bucket_cnt[bucket] += 1
+        self.domain_docs[domain] += 1
+        self.domain_toks[domain] += nt
+        self.lang_docs[lang] += 1
+        self.lang_toks[lang] += nt
+        self.src_docs[src] += 1
+        self.src_toks[src] += nt
 
         if ts is not None:
-            ts_present += 1
-            ym_dist[ts.strftime("%Y-%m")] += 1
+            self.ts_present += 1
+            self.ym_dist[ts.strftime("%Y-%m")] += 1
         else:
-            ts_missing += 1
+            self.ts_missing += 1
 
-        result = DocResult(
+        self.n_docs += 1
+
+        return DocResult(
             doc_id=str(doc["doc_id"]),
             scores={"char_count": nc, "token_count": nt, "length_bucket": bucket},
             flags={
@@ -178,36 +179,55 @@ def compute_doc_stats(
                 "missing_source": doc.get("source") is None,
             },
         )
+
+    def finalize(self) -> dict:
+        total = self.n_docs
+        total_toks = sum(self.tok_counts)
+        return {
+            "total_docs": total,
+            "char_stats": _dist_stats(self.char_counts, self._pcts),
+            "token_stats": _dist_stats(self.tok_counts, self._pcts),
+            "length_buckets": {
+                b: {
+                    "count": self.bucket_cnt[b],
+                    "pct": round(self.bucket_cnt[b] / total, 4) if total else 0.0,
+                }
+                for b in _BUCKET_ORDER
+            },
+            "domain_distribution": _group_table(self.domain_docs, self.domain_toks, total_toks),
+            "language_distribution": _group_table(self.lang_docs, self.lang_toks, total_toks),
+            "source_distribution": _group_table(self.src_docs, self.src_toks, total_toks),
+            "timestamp": {
+                "present": self.ts_present,
+                "missing": self.ts_missing,
+                "present_pct": round(self.ts_present / total, 4) if total else 0.0,
+                "year_month_distribution": dict(sorted(self.ym_dist.items())),
+            },
+        }
+
+
+def compute_doc_stats(
+    docs: Iterable[Document],
+    tokenize: Callable[[str], int],
+    on_doc: Callable[[DocResult], None] | None = None,
+    percentiles: tuple = (25, 50, 75, 90, 95, 99),
+) -> tuple[list[DocResult], dict]:
+    """Compute corpus-level and per-document statistics.
+
+    on_doc: if provided, called for each DocResult (streaming mode for large
+            corpora). The returned per_doc list will be empty in this case.
+    Returns (per_doc_results, summary_dict).
+    """
+    agg = DocStatsAggregator(percentiles=percentiles)
+    per_doc: list[DocResult] = []
+    for doc in docs:
+        text: str = doc.get("text") or ""  # type: ignore[assignment]
+        result = agg.add(doc, tokenize(text))
         if on_doc is not None:
             on_doc(result)
         else:
             per_doc.append(result)
-        n_docs += 1
-
-    total = n_docs
-    total_toks = sum(tok_counts)
-    summary = {
-        "total_docs": total,
-        "char_stats": _dist_stats(char_counts),
-        "token_stats": _dist_stats(tok_counts),
-        "length_buckets": {
-            b: {
-                "count": bucket_cnt[b],
-                "pct": round(bucket_cnt[b] / total, 4) if total else 0.0,
-            }
-            for b in _BUCKET_ORDER
-        },
-        "domain_distribution": _group_table(domain_docs, domain_toks, total_toks),
-        "language_distribution": _group_table(lang_docs, lang_toks, total_toks),
-        "source_distribution": _group_table(src_docs, src_toks, total_toks),
-        "timestamp": {
-            "present": ts_present,
-            "missing": ts_missing,
-            "present_pct": round(ts_present / total, 4) if total else 0.0,
-            "year_month_distribution": dict(sorted(ym_dist.items())),
-        },
-    }
-    return per_doc, summary
+    return per_doc, agg.finalize()
 
 
 # ── Row 2: license detection ──────────────────────────────────────────────────
@@ -288,14 +308,3 @@ def compute_license(
         "license_type_distribution": dict(license_type_cnt.most_common()),
     }
     return per_doc, summary
-
-
-# ── Row 3: executor.json snapshot ─────────────────────────────────────────────
-
-def record_snapshot(executor_json_path: str) -> dict:
-    """Load and return a DataTrove executor.json for archiving.
-
-    Just reads and returns the JSON — no validation of its contents.
-    """
-    with open(executor_json_path, encoding="utf-8") as f:
-        return json.load(f)

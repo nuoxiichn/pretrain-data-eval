@@ -13,17 +13,24 @@ dependencies = [
     # HTML/PDF 正文抽取
     "trafilatura>=1.8",
     # 语言识别
-    "fasttext>=0.9.2",         # lid.176 模型需单独下载
+    "fasttext>=0.9.2",         # lid.176 + GlotLID 模型需单独下载
+    "langcodes>=3.3",          # 粗细语种交叉核对：ISO2/ISO3 + 宏语言归一
+    # 文本质量（stage 3 quality）
+    "nltk>=3.8",               # Gopher/C4 真分词器（punkt）；需 nltk.download('punkt')
+    "jieba>=0.42",             # CJK 中文分词（Gopher/C4 质量规则中文适配）
     # PII 检测
     "presidio-analyzer>=2.2",
     "presidio-anonymizer>=2.2",
     "spacy>=3.7",              # presidio 默认 NLP 后端
-    # 毒性分类
-    "detoxify>=0.5",
+    # 毒性分类：detoxify unbiased 模型走本地 HF 目录（transformers 直接加载），
+    # 不依赖 detoxify pip 包（其默认从 GitHub 拉 .ckpt）。仅需 transformers + torch。
     # 代码解析
     "tree-sitter>=0.21",
+    "tree-sitter-python>=0.21",
     # 去重 & 污染（Dolma Rust 后端）
     "dolma>=1.0",
+    # 污染检测 benchmark 加载
+    "datasets>=2.14",
     # 许可证检测
     "scancode-toolkit>=32",
     # Tokenization
@@ -60,6 +67,9 @@ dev = [
 #   KenLM        — pip install kenlm（需 C++ 构建工具）
 #   DCLM fasttext — 模型文件：fasttext_oh_eli5.bin（手动下载）
 #   BigCode PII  — git clone https://github.com/bigcode-project/bigcode-dataset
+
+[tool.hatch.build.targets.wheel]
+packages = ["src", "stages"]
 
 [tool.ruff]
 line-length = 100

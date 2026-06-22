@@ -1,0 +1,45 @@
+# Stage 4: 重复度分析
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+exact:
+  paragraph_sep: "\n\n"       # 段落分隔符
+  min_para_chars: 50          # 段落长度下限，短于此不参与段落级去重
+
+minhash:
+  num_hashes: 64              # 64 = 8 bands × 8 rows，threshold≈0.80（DataTrove 通用值）
+  ngram_size: 5               # word n-gram 大小
+  jaccard_threshold: 0.8      # 近重复判定阈值
+  num_bands: 8                # LSH bands
+  band_size: 8
+  hot_bucket_cap: 1000        # 单桶超过则跳过候选对（防 boilerplate O(B²) 爆炸）
+
+ngram:
+  ngram_size: 13              # Dolma 默认 13-gram
+  overlap_threshold: 0.5      # 段落 shingle 重叠率 ≥ 此值视为重复段落
+
+semdedup:
+  model_path: /mnt/public/model/bge-m3   # 本地 embedding 模型（中英双强）
+  eps: 0.07                   # cos 阈值 = 1 - eps = 0.93（SemDeDup 原默认，抓近乎逐字改写）
+  # 标定参考：UFW-L3 en multi_style 2000 条样本 top-cos 最高仅 0.876（p99=0.77），
+  # 故 0.93 下命中 0%——说明该批已去重良好，非 bug。若要抓"同义改写级"重复，
+  # 放宽到 eps=0.15（cos≥0.85，约 0.3% 命中）；放宽会增加同主题误判，需人工核。
+  batch_size: 64              # 编码批大小
+  max_length: 512             # token 截断长度（bge-m3 上限）
+  sim_block: 2048             # 相似度矩阵分块行数（控制显存）
+  device: cuda                # MetaX GPU；无 GPU 时设 cpu
+
+output:
+  base_dir: outputs/stage4

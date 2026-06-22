@@ -1,0 +1,40 @@
+# Stage 2: 安全隐私检测
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+pii:
+  language: en
+  entities: []               # [] = 用内置默认实体集（已剔除 driver/medical/uk_nhs 等高误报类）；
+                             # 如需自定义，显式列出实体名，会完全覆盖默认集
+  score_threshold: 0.5
+  spacy_model: en_core_web_lg   # 可改为绝对路径，如 /mnt/public/model/en_core_web_lg
+  # 注：命中后自动过滤示例/占位符（example.com 邮箱、保留/私有 IP 等），
+  #     被过滤数记入 summary.filtered_placeholder_count
+
+secrets:
+  gitleaks_bin: gitleaks     # gitleaks 二进制路径或命令名
+
+toxicity:
+  model_path: /mnt/public/data/models/xlmr-large-toxicity-classifier
+                             # 支持两类模型，自动识别：
+                             #   多标签（detoxify unbiased RoBERTa）→ sigmoid，7 维打分
+                             #   二分类（xlmr-large-toxicity-classifier 等）→ softmax，单维 toxicity
+                             # 备选英文 7 维：/mnt/public/model/detoxify/unbiased-toxic-roberta
+                             # 切换时改此路径即可，无需改代码。
+  high_risk_threshold: 0.5   # toxicity 维度超过此值视为高风险
+  batch_size: 16             # 推理批大小
+
+output:
+  base_dir: outputs/stage2

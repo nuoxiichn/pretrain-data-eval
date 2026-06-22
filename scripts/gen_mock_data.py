@@ -175,6 +175,52 @@ AI_GENERATED = [
     "Feel free to ask me anything! I am here to help you with your queries.",
 ]
 
+PYTHON_SYNTAX_ERRORS = [
+    '''\
+def broken_function(x, y
+    return x + y
+''',
+    '''\
+class Foo:
+    def bar(self):
+        if True
+            print("missing colon")
+''',
+    '''\
+for i in range(10)
+    x = i ** 2
+    print(x
+''',
+    '''\
+import os
+def valid_function():
+    return 42
+
+def broken():
+    x = [1, 2, 3
+    return x
+''',
+]
+
+LATEX_DOCS = [
+    r"The quadratic formula is $x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$. "
+    r"This can be derived from $ax^2 + bx + c = 0$ by completing the square. "
+    r"$$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$",
+
+    r"Consider the Schrödinger equation: "
+    r"$$i\hbar\frac{\partial}{\partial t}\Psi = \hat{H}\Psi$$ "
+    r"where $\hat{H}$ is the Hamiltonian operator and $\Psi$ the wavefunction.",
+
+    r"\begin{equation} E = mc^2 \end{equation} "
+    r"Einstein's mass-energy equivalence relates energy $E$ to mass $m$ "
+    r"via the speed of light $c \approx 3 \times 10^8$ m/s. "
+    r"\begin{align} F &= ma \\ p &= mv \end{align}",
+
+    r"The Taylor series expansion: $f(x) = \sum_{n=0}^{\infty} \frac{f^{(n)}(a)}{n!}(x-a)^n$. "
+    r"For example, ```python\nimport math\ndef taylor_exp(x, n=10):\n    return sum(x**k / math.factorial(k) for k in range(n))\n``` "
+    r"gives an approximation to $e^x$.",
+]
+
 SOURCES = ["common_crawl", "github", "arxiv", "wikipedia", "books", "stackexchange"]
 DOMAINS = ["en.wikipedia.org", "github.com", "arxiv.org", "stackoverflow.com",
            "reddit.com", "news.ycombinator.com", "medium.com"]
@@ -377,6 +423,68 @@ def gen_missing_fields(counter, n=15):
         counter[0] += 1
     return docs
 
+
+def gen_code_with_errors(counter):
+    """有语法错误的 Python 代码（Stage 8 parsability 测试）。"""
+    docs = []
+    for snippet in PYTHON_SYNTAX_ERRORS * 2:
+        docs.append(make_doc(make_id("pyerr", counter[0]), snippet, "github", "en",
+                              domain="github.com",
+                              extra_meta={"lang": "python", "has_syntax_error": True}))
+        counter[0] += 1
+    return docs
+
+
+def gen_latex_docs(counter):
+    """含 LaTeX 公式的学术文档（Stage 10 tokenization 测试）。"""
+    docs = []
+    for text in LATEX_DOCS * 2:
+        docs.append(make_doc(make_id("latex", counter[0]), text, "arxiv", "en",
+                              domain="arxiv.org",
+                              extra_meta={"has_latex": True}))
+        counter[0] += 1
+    return docs
+
+
+def gen_megatron_config(output_dir: Path):
+    """生成 mock Megatron-LM 训练配置文件（Stage 9 config-audit 测试）。"""
+    config = {
+        "model": {
+            "hidden_size": 4096,
+            "num_attention_heads": 32,
+            "num_layers": 32,
+            "seq_length": 4096,
+        },
+        "training": {
+            "micro_batch_size": 4,
+            "global_batch_size": 256,
+            "lr": 3e-4,
+            "min_lr": 3e-5,
+            "weight_decay": 0.1,
+        },
+        "data": {
+            "data_path": "/data/tokenized/train",
+            "split": "98,2,0",
+        },
+        "reset_position_ids": True,
+        "reset_attention_mask": True,
+        "eod_mask_loss": True,
+    }
+    config_path = output_dir / "mock_megatron_config.yaml"
+    import yaml
+    with config_path.open("w", encoding="utf-8") as f:
+        yaml.dump(config, f, default_flow_style=False)
+    print(f"生成 Megatron 配置 -> {config_path}")
+
+    # 生成一个缺失参数的配置（FAIL case）
+    config_fail = dict(config)
+    del config_fail["eod_mask_loss"]
+    config_fail["reset_attention_mask"] = False
+    fail_path = output_dir / "mock_megatron_config_fail.yaml"
+    with fail_path.open("w", encoding="utf-8") as f:
+        yaml.dump(config_fail, f, default_flow_style=False)
+    print(f"生成 Megatron 配置 (FAIL) -> {fail_path}")
+
 # ── 主入口 ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -397,11 +505,13 @@ def main():
         + gen_pii(counter)
         + gen_secrets(counter)
         + gen_code(counter)
+        + gen_code_with_errors(counter)
         + gen_exact_duplicates(normal_docs, counter)
         + gen_near_duplicates(counter)
         + gen_low_quality(counter)
         + gen_ai_generated(counter)
         + gen_arxiv(counter)
+        + gen_latex_docs(counter)
         + gen_missing_fields(counter)
     )
 
@@ -410,6 +520,8 @@ def main():
     with out_path.open("w", encoding="utf-8") as f:
         for doc in all_docs:
             f.write(json.dumps(doc, ensure_ascii=False) + "\n")
+
+    gen_megatron_config(out_path.parent)
 
     print(f"生成 {len(all_docs)} 条文档 -> {out_path}")
     print(f"字段覆盖：doc_id / text / source / url / timestamp / language / meta")

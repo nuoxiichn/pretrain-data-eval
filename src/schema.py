@@ -24,7 +24,7 @@ class DocResult:
 def make_output_dir(base: str | Path, stage: str, dataset: str) -> Path:
     """Return and create outputs/{base}/{dataset}_{ts}/{stage}/."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = Path(base) / f"{dataset}_{ts}" / stage
+    out = Path(base).resolve() / f"{dataset}_{ts}" / stage
     out.mkdir(parents=True, exist_ok=True)
     return out
 

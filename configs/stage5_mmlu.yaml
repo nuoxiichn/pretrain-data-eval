@@ -1,0 +1,43 @@
+# Stage 5: 污染检测 — MMLU only
+# 从 stage5.yaml 精简，仅保留 MMLU 作为参考集
+# 系统支持在 benchmarks.datasets 中添加任意 HF dataset / 本地文件
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+benchmarks:
+  cache_dir: /mnt/public/data
+  datasets:
+    - path: /mnt/public/data/mmlu_test.jsonl
+      text_field: question
+      label: mmlu
+
+exact:
+  paragraph_sep: "\n\n"
+  min_para_chars: 50
+
+code_near:
+  ngram_size: 5
+  jaccard_threshold: 0.85
+  num_hashes: 128
+  num_bands: 16
+  band_size: 8
+
+code_ast:
+  languages:
+    - python
+  fingerprint_jaccard_threshold: 0.90
+
+output:
+  base_dir: outputs/stage5
