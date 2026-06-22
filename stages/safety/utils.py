@@ -46,10 +46,19 @@ _CODE_ENTITIES = [
 _PLACEHOLDER_EMAIL_DOMAINS = {
     "example.com", "example.org", "example.net", "example.edu",
     "test.com", "email.com", "domain.com", "yourdomain.com", "sample.com",
+    "mydomain.com", "company.com", "acme.com", "foo.com", "foo.bar",
+    "localhost", "localhost.localdomain",
 }
+# RFC 2606 §2 保留的顶级域（任何 *.test / *.example / *.invalid / *.localhost 都是占位）
+_PLACEHOLDER_EMAIL_TLDS = (".test", ".example", ".invalid", ".localhost")
 _PLACEHOLDER_EMAIL_LOCALS = {
-    "firstname.lastname", "first.last", "email", "user", "username",
-    "name", "your", "yourname", "youremail", "test", "example", "someone",
+    "firstname.lastname", "first.last", "lastname.firstname",
+    "email", "user", "username", "name", "your", "yourname",
+    "youremail", "your-email", "your_email", "test", "example", "someone",
+    "john.doe", "jane.doe", "johndoe", "janedoe", "john", "jane",
+    "noreply", "no-reply", "donotreply", "do-not-reply",
+    "placeholder", "me", "you", "info", "admin", "contact",
+    "anyone", "somebody", "nobody", "abc", "xyz", "foo", "bar",
 }
 # RFC5737 文档示例 IP 段（非真实主机）
 _DOC_IP_NETWORKS = ("192.0.2.", "198.51.100.", "203.0.113.")
@@ -67,6 +76,8 @@ def _is_placeholder(entity_type: str, value: str) -> bool:
         local, _, domain = v.rpartition("@")
         domain = domain.lower()
         if domain in _PLACEHOLDER_EMAIL_DOMAINS:
+            return True
+        if any(domain.endswith(tld) for tld in _PLACEHOLDER_EMAIL_TLDS):
             return True
         if local.lower() in _PLACEHOLDER_EMAIL_LOCALS:
             return True
