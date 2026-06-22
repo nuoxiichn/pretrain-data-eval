@@ -18,7 +18,12 @@ parsability:
   language: python
 
 stem:
-  min_keyword_density: 0.001
+  model_path: /mnt/public/model/EssentialAI/eai-distill-0.5b
+  batch_size: 8
+  max_input_chars: 30000       # 超长文本走 beginning/middle/end 拼接
+  max_new_tokens: 100
+  device: null                 # null = auto (cuda if available, else cpu)
+  high_difficulty_threshold: 4  # reasoning_depth >= 该值视为 high_difficulty
 
 output:
   base_dir: outputs/stage8

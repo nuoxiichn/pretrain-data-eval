@@ -109,24 +109,34 @@ def parsability(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
               show_default=True)
 @click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
-@click.option("--min-density", default=None, type=float, help="最小关键词密度阈值")
+@click.option("--model-path", default=None, help="EAI-Distill-0.5b 权重目录（覆盖 yaml）")
+@click.option("--batch-size", default=None, type=int, help="推理 batch（覆盖 yaml）")
+@click.option("--device", default=None, help="cuda / cpu（默认自动检测）")
 def stem(input_path, dataset, config_path, output_base, output_dir,
-         input_format, max_docs, sample_mode, seed, min_density):
-    """STEM 学科分布 / 难度分层（关键词密度分类）"""
+         input_format, max_docs, sample_mode, seed,
+         model_path, batch_size, device):
+    """学科分类 / 难度分层（EAI-Distill-0.5b 推理）"""
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
     if input_format:
         input_cfg["format"] = input_format
     stem_cfg = cfg.get("stem", {})
 
-    density = min_density if min_density is not None else stem_cfg.get("min_keyword_density", 0.001)
+    model_path = model_path or stem_cfg.get("model_path")
+    if not model_path:
+        raise click.UsageError("缺少 model_path（在 configs/stage8.yaml 或 --model-path 指定）")
+    bsz = batch_size if batch_size is not None else stem_cfg.get("batch_size", 8)
+    dev = device or stem_cfg.get("device")
+    max_input_chars = stem_cfg.get("max_input_chars", 30000)
+    max_new_tokens = stem_cfg.get("max_new_tokens", 100)
+    hd_thr = stem_cfg.get("high_difficulty_threshold", 4)
 
     click.echo(f"[stem] 读取 {input_path} ...")
     docs = sample_documents(read_documents(input_path, config=input_cfg),
                             max_docs, mode=sample_mode, seed=seed)
     if max_docs:
         click.echo(f"[stem] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
-    click.echo(f"[stem] 共 {len(docs)} 文档，min_density={density}")
+    click.echo(f"[stem] 共 {len(docs)} 文档，model={model_path}，batch={bsz}")
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "stem")
     per_doc_path = out_dir / "per_doc.jsonl"
@@ -136,17 +146,32 @@ def stem(input_path, dataset, config_path, output_base, output_dir,
         def _write(r: DocResult) -> None:
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
 
-        _, summary = compute_stem(docs, min_density=density, on_doc=_write)
+        _, summary = compute_stem(
+            docs,
+            model_path=model_path,
+            batch_size=bsz,
+            max_input_chars=max_input_chars,
+            max_new_tokens=max_new_tokens,
+            device=dev,
+            high_difficulty_threshold=hd_thr,
+            on_doc=_write,
+        )
     elapsed = time.time() - t0
     summary["elapsed_seconds"] = round(elapsed, 1)
 
     sm_path = write_summary(summary, out_dir)
     click.echo(
         f"[stem] STEM {summary['stem_docs']}/{summary['total_docs']}"
-        f" ({summary['stem_pct']:.1%})"
+        f" ({summary['stem_pct']:.1%}),"
+        f" high_difficulty {summary['high_difficulty_docs']} ({summary['high_difficulty_pct']:.1%}),"
+        f" parse_failed {summary['parse_failed_docs']} ({summary['parse_failed_pct']:.1%})"
     )
-    click.echo(f"[stem] 学科分布 top: {summary.get('primary_subject_top10', {})}")
-    click.echo(f"[stem] 耗时 {elapsed:.1f}s")
+    top3 = sorted(
+        summary["fdc_top_distribution"].items(),
+        key=lambda kv: kv[1]["docs"], reverse=True,
+    )[:3]
+    click.echo(f"[stem] FDC top-3: {[(k, v['docs']) for k, v in top3]}")
+    click.echo(f"[stem] 耗时 {elapsed:.1f}s（device={summary.get('device')}）")
     click.echo(f"  -> {sm_path}")
     click.echo(f"  -> {per_doc_path}")
 

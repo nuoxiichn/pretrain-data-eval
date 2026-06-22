@@ -2,13 +2,13 @@
 
 Subcommands:
   parsability — code parsability via tree-sitter (ERROR node counting)
-  stem        — STEM subject classification via keyword density
+  stem        — subject + difficulty via EAI-Distill-0.5b inference
 """
 
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Callable, Iterable
 
 import numpy as np
@@ -157,250 +157,238 @@ def compute_parsability(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEM classification (keyword density)
+# STEM classification via EAI-Distill-0.5b (FDC + Bloom)
 # ══════════════════════════════════════════════════════════════════════════════
+# 模型：https://hf-mirror.com/EssentialAI/eai-distill-0.5b
+# 输出 10 行 "{primary},{secondary or skip}" 格式（FDC / Bloom*2 / DocType-v1 /
+# Extraction / Missing / DocType-v2 / ReasoningDepth / TechCorrect / EduLevel）。
+# 本实现接入其中三维：FDC（学科）、reasoning_depth、educational_level。
 
-_DEFAULT_STEM_TAXONOMY: dict[str, dict[str, list[str]]] = {
-    "cs": {
-        "machine_learning": [
-            "neural network", "deep learning", "gradient descent", "backpropagation",
-            "classifier", "regression", "overfitting", "transformer", "attention mechanism",
-            "fine-tuning", "reinforcement learning", "convolutional",
-        ],
-        "algorithms": [
-            "algorithm", "complexity", "sorting", "graph theory", "dynamic programming",
-            "recursion", "binary search", "hash table", "data structure",
-        ],
-        "systems": [
-            "operating system", "distributed system", "concurrency", "cache",
-            "memory management", "kernel", "microservice",
-        ],
-        "nlp": [
-            "tokenization", "embedding", "language model", "parsing", "named entity",
-            "sentiment analysis", "machine translation", "text classification",
-        ],
-        "cv": [
-            "convolution", "image classification", "object detection", "segmentation",
-            "generative adversarial", "image recognition",
-        ],
-    },
-    "math": {
-        "algebra": [
-            "polynomial", "matrix", "eigenvalue", "linear algebra", "vector space",
-            "determinant", "eigenvector", "tensor",
-        ],
-        "calculus": [
-            "derivative", "integral", "differential equation", "limit", "convergence",
-            "partial derivative", "gradient",
-        ],
-        "statistics": [
-            "probability", "distribution", "hypothesis test", "bayesian", "variance",
-            "standard deviation", "confidence interval", "p-value", "regression analysis",
-        ],
-        "discrete": [
-            "combinatorics", "permutation", "set theory", "boolean algebra",
-            "graph coloring", "number theory",
-        ],
-    },
-    "physics": {
-        "mechanics": [
-            "force", "momentum", "velocity", "acceleration", "kinetic energy",
-            "potential energy", "angular momentum",
-        ],
-        "quantum": [
-            "quantum mechanics", "wavefunction", "superposition", "entanglement",
-            "quantum computing", "qubit",
-        ],
-        "thermodynamics": [
-            "entropy", "thermodynamic", "heat transfer", "boltzmann",
-            "thermal equilibrium",
-        ],
-        "electromagnetism": [
-            "electromagnetic", "maxwell", "electric field", "magnetic field",
-            "electromagnetic wave",
-        ],
-    },
-    "chemistry": {
-        "organic": [
-            "organic compound", "polymer", "reaction mechanism", "catalyst",
-            "functional group", "hydrocarbon",
-        ],
-        "inorganic": [
-            "crystal structure", "ionic bond", "oxidation", "coordination compound",
-            "electrochemistry",
-        ],
-        "biochemistry": [
-            "protein", "enzyme", "amino acid", "dna", "rna", "metabolism",
-            "molecular biology", "gene expression",
-        ],
-    },
-    "biology": {
-        "genetics": [
-            "gene", "genome", "mutation", "crispr", "heritability", "allele",
-            "chromosome", "dna sequencing",
-        ],
-        "ecology": [
-            "ecosystem", "biodiversity", "population dynamics", "species",
-            "ecological niche", "food chain",
-        ],
-        "cell_biology": [
-            "cell membrane", "mitosis", "organelle", "cytoplasm", "apoptosis",
-        ],
-    },
-    "engineering": {
-        "electrical": [
-            "circuit", "semiconductor", "transistor", "signal processing", "fpga",
-            "integrated circuit",
-        ],
-        "mechanical": [
-            "stress analysis", "strain", "fluid dynamics", "turbulence",
-            "finite element",
-        ],
-        "materials": [
-            "alloy", "composite material", "crystallography", "tensile strength",
-            "nanomaterial",
-        ],
-    },
-    "medicine": {
-        "clinical": [
-            "diagnosis", "treatment", "clinical trial", "prognosis", "pathology",
-            "epidemiology",
-        ],
-        "pharmacology": [
-            "drug", "dosage", "pharmacokinetics", "receptor", "pharmacodynamics",
-        ],
-    },
+FDC_TOP_LABELS: dict[int, str] = {
+    0:   "General/Computer",
+    100: "Philosophy",
+    200: "Religion",
+    300: "Social Sci",
+    400: "Language",
+    500: "Pure Science",
+    600: "Technology",
+    700: "Arts",
+    800: "Literature",
+    900: "History/Geography",
 }
 
-_DEFAULT_DIFFICULTY_KEYWORDS: dict[str, list[str]] = {
-    "advanced": [
-        "theorem", "proof", "lemma", "corollary", "conjecture", "non-trivial",
-        "asymptotic", "intractable", "np-hard", "lagrangian", "hamiltonian",
-        "perturbation theory", "renormalization", "homomorphism", "isomorphism",
-        "stochastic", "manifold", "hilbert space", "variational",
-    ],
-    "intermediate": [
-        "equation", "derivation", "formulation", "optimization", "constraint",
-        "objective function", "loss function", "convergence rate",
-        "complexity analysis", "approximation", "numerical method",
-    ],
-    "basic": [
-        "introduction", "fundamental", "basic", "definition", "example",
-        "tutorial", "beginner", "overview", "primer",
-    ],
-}
+# CS / 自然科学 / 应用技术 视为 STEM。
+STEM_TOP_CLASSES: frozenset[int] = frozenset({0, 500, 600})
+
+_FDC_PRIMARY_RE = re.compile(r"^(\d{1,3})")
 
 
-def _compile_taxonomy(taxonomy: dict[str, dict[str, list[str]]]) -> dict[str, list[re.Pattern]]:
-    """Compile taxonomy keywords into regex patterns for efficient matching."""
-    compiled: dict[str, list[re.Pattern]] = {}
-    for cat, subcats in taxonomy.items():
-        patterns = []
-        for keywords in subcats.values():
-            for kw in keywords:
-                patterns.append(re.compile(r"\b" + re.escape(kw.lower()) + r"\b"))
-        compiled[cat] = patterns
-    return compiled
+def _chunk_text(text: str, max_char_per_doc: int = 30000) -> str:
+    """超长文本取首/中/尾各 1/3 拼接（确定性版本，便于复现）。
+
+    模型 README 给的 chunk_text 用随机中点，这里改成几何中点。
+    """
+    if len(text) <= max_char_per_doc:
+        return text
+    chunk_size = max_char_per_doc // 3
+    start = text[:chunk_size]
+    mid_center = len(text) // 2
+    middle = text[mid_center - chunk_size // 2 : mid_center + chunk_size // 2]
+    end = text[-chunk_size:]
+    return f"[beginning]\n{start}\n[middle]\n{middle}\n[end]\n{end}"
 
 
-def _compile_difficulty(keywords: dict[str, list[str]]) -> dict[str, list[re.Pattern]]:
-    compiled: dict[str, list[re.Pattern]] = {}
-    for level, kws in keywords.items():
-        compiled[level] = [re.compile(r"\b" + re.escape(kw.lower()) + r"\b") for kw in kws]
-    return compiled
+def _parse_primary(line: str) -> str | None:
+    """取一行中逗号前的 primary 字段；'skip' 或空视为 None。"""
+    if not line:
+        return None
+    head = line.split(",", 1)[0].strip()
+    if not head or head.lower() == "skip":
+        return None
+    return head
+
+
+def _parse_int_primary(line: str) -> int | None:
+    p = _parse_primary(line)
+    if p is None:
+        return None
+    try:
+        return int(p)
+    except ValueError:
+        return None
+
+
+def _parse_eai_output(text: str) -> dict:
+    """解析 EAI-Distill 的 10 行 csv-like 输出。
+
+    返回的 fdc_top_class 是杜威顶层（0/100/200/.../900）。
+    任一关键字段缺失或 FDC 解析失败 → parse_failed=True。
+    """
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+
+    fdc_raw = _parse_primary(lines[0]) if len(lines) > 0 else None
+    reasoning_depth = _parse_int_primary(lines[7]) if len(lines) > 7 else None
+    educational_level = _parse_int_primary(lines[9]) if len(lines) > 9 else None
+
+    fdc_top_class: int | None = None
+    if fdc_raw:
+        m = _FDC_PRIMARY_RE.match(fdc_raw)
+        if m:
+            n = int(m.group(1))
+            fdc_top_class = (n // 100) * 100
+
+    return {
+        "fdc_raw": fdc_raw,
+        "fdc_top_class": fdc_top_class,
+        "reasoning_depth": reasoning_depth,
+        "educational_level": educational_level,
+        "parse_failed": fdc_top_class is None,
+    }
 
 
 def compute_stem(
     docs: Iterable[Document],
-    taxonomy: dict[str, dict[str, list[str]]] | None = None,
-    difficulty_keywords: dict[str, list[str]] | None = None,
-    min_density: float = 0.001,
+    model_path: str,
+    batch_size: int = 8,
+    max_input_chars: int = 30000,
+    max_new_tokens: int = 100,
+    device: str | None = None,
+    high_difficulty_threshold: int = 4,
     on_doc: Callable[[DocResult], None] | None = None,
 ) -> tuple[list[DocResult], dict]:
-    """Classify documents by STEM subject and difficulty via keyword density.
+    """通过 EAI-Distill-0.5b 推理给文档打 FDC 学科 / reasoning_depth / educational_level。
 
     Returns (per_doc_results, summary_dict).
     """
     doc_list = list(docs)
     if not doc_list:
-        return [], {"total_docs": 0}
+        return [], {"total_docs": 0, "model_path": model_path}
 
-    tax = taxonomy or _DEFAULT_STEM_TAXONOMY
-    diff_kw = difficulty_keywords or _DEFAULT_DIFFICULTY_KEYWORDS
-    compiled_tax = _compile_taxonomy(tax)
-    compiled_diff = _compile_difficulty(diff_kw)
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path, torch_dtype=dtype, trust_remote_code=True
+    ).to(device).eval()
 
     per_doc: list[DocResult] = []
+    fdc_counter: Counter[int] = Counter()
+    reasoning_counter: Counter[int] = Counter()
+    edu_counter: Counter[int] = Counter()
     stem_count = 0
-    subject_counter: Counter = Counter()
-    difficulty_counter: Counter = Counter()
+    high_diff_count = 0
+    parse_failed_count = 0
 
-    for doc in doc_list:
-        doc_id = str(doc["doc_id"])
-        text = str(doc.get("text") or "")
-        text_lower = text.lower()
-        words = text_lower.split()
-        word_count = len(words)
+    n = len(doc_list)
+    for start_i in range(0, n, batch_size):
+        batch_docs = doc_list[start_i : start_i + batch_size]
 
-        subject_scores: dict[str, float] = {}
-        total_hits = 0
-        for cat, patterns in compiled_tax.items():
-            hits = sum(len(p.findall(text_lower)) for p in patterns)
-            density = hits / word_count if word_count > 0 else 0.0
-            subject_scores[cat] = round(density, 6)
-            total_hits += hits
+        prompts: list[str] = []
+        for doc in batch_docs:
+            text = str(doc.get("text") or "")
+            chunked = _chunk_text(text, max_char_per_doc=max_input_chars)
+            messages = [
+                {"role": "system", "content": "taxonomy"},
+                {"role": "user", "content": chunked},
+            ]
+            prompts.append(tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            ))
 
-        primary = None
-        max_density = 0.0
-        for cat, density in subject_scores.items():
-            if density >= min_density and density > max_density:
-                max_density = density
-                primary = cat
+        enc = tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=16384,
+        ).to(device)
+        input_len = enc["input_ids"].shape[1]
 
-        difficulty = "unknown"
-        for level in ("advanced", "intermediate", "basic"):
-            if any(p.search(text_lower) for p in compiled_diff[level]):
-                difficulty = level
-                break
+        with torch.no_grad():
+            out_ids = model.generate(
+                **enc,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+        new_ids = out_ids[:, input_len:]
+        decoded = tokenizer.batch_decode(new_ids, skip_special_tokens=True)
 
-        is_stem = primary is not None
+        for doc, gen_text in zip(batch_docs, decoded):
+            doc_id = str(doc["doc_id"])
+            parsed = _parse_eai_output(gen_text)
 
-        result = DocResult(
-            doc_id=doc_id,
-            scores={
-                "subject_scores": subject_scores,
-                "primary_subject": primary,
-                "difficulty_level": difficulty,
-                "word_count": word_count,
-                "stem_keyword_hits": total_hits,
-            },
-            flags={"is_stem": is_stem},
-        )
+            top_cls = parsed["fdc_top_class"]
+            top_label = FDC_TOP_LABELS.get(top_cls) if top_cls is not None else None
+            is_stem = top_cls in STEM_TOP_CLASSES if top_cls is not None else False
+            rd = parsed["reasoning_depth"]
+            high_diff = rd is not None and rd >= high_difficulty_threshold
 
-        if on_doc is not None:
-            on_doc(result)
-        else:
-            per_doc.append(result)
+            result = DocResult(
+                doc_id=doc_id,
+                scores={
+                    "fdc_raw": parsed["fdc_raw"],
+                    "fdc_top_class": top_cls,
+                    "fdc_top_label": top_label,
+                    "reasoning_depth": rd,
+                    "educational_level": parsed["educational_level"],
+                },
+                flags={
+                    "is_stem": is_stem,
+                    "high_difficulty": high_diff,
+                    "parse_failed": parsed["parse_failed"],
+                },
+            )
 
-        if is_stem:
-            stem_count += 1
-            subject_counter[primary] += 1
-        difficulty_counter[difficulty] += 1
+            if on_doc is not None:
+                on_doc(result)
+            else:
+                per_doc.append(result)
 
-    total = len(doc_list)
-    subject_dist = {
-        cat: {"docs": subject_counter.get(cat, 0),
-              "pct": round(subject_counter.get(cat, 0) / total, 4) if total else 0.0}
-        for cat in sorted(tax.keys())
-    }
+            if parsed["parse_failed"]:
+                parse_failed_count += 1
+            if top_cls is not None:
+                fdc_counter[top_cls] += 1
+            if is_stem:
+                stem_count += 1
+            if rd is not None:
+                reasoning_counter[rd] += 1
+            if parsed["educational_level"] is not None:
+                edu_counter[parsed["educational_level"]] += 1
+            if high_diff:
+                high_diff_count += 1
+
+    fdc_top_distribution = {}
+    for cls, label in FDC_TOP_LABELS.items():
+        cnt = fdc_counter.get(cls, 0)
+        fdc_top_distribution[f"{cls:03d} {label}"] = {
+            "docs": cnt,
+            "pct": round(cnt / n, 4) if n else 0.0,
+        }
 
     summary = {
-        "total_docs": total,
+        "total_docs": n,
+        "parse_failed_docs": parse_failed_count,
+        "parse_failed_pct": round(parse_failed_count / n, 4) if n else 0.0,
         "stem_docs": stem_count,
-        "stem_pct": round(stem_count / total, 4) if total else 0.0,
-        "min_keyword_density": min_density,
-        "subject_distribution": subject_dist,
-        "difficulty_distribution": dict(difficulty_counter.most_common()),
-        "primary_subject_top10": dict(subject_counter.most_common(10)),
+        "stem_pct": round(stem_count / n, 4) if n else 0.0,
+        "high_difficulty_docs": high_diff_count,
+        "high_difficulty_pct": round(high_diff_count / n, 4) if n else 0.0,
+        "fdc_top_distribution": fdc_top_distribution,
+        "reasoning_depth_distribution": dict(sorted(reasoning_counter.items())),
+        "educational_level_distribution": dict(sorted(edu_counter.items())),
+        "model_path": model_path,
+        "device": device,
+        "batch_size": batch_size,
+        "high_difficulty_threshold": high_difficulty_threshold,
     }
     return per_doc, summary
