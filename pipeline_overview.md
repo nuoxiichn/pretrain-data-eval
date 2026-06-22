@@ -43,6 +43,58 @@
 
 ---
 
+## 版本与变更
+
+| 版本 | 分支 | 状态 | 报告产物 |
+|------|------|------|----------|
+| v2   | `main`（2026-06-22 归档） | 已交付 | `outputs/report/ufw_l3_profile_v2.md` — Stage 1–5 + 7 + 8 + 10 完成 |
+| v3   | `dev-v3`（进行中） | 见下方 §"v3 计划" | `outputs/report/ufw_l3_profile_v3.md`（新建，含 v2→v3 增量与回归对照） |
+
+> **v2 报告 / v2 子命令产物不动。** v3 出新报告与（必要时）新子命令；同一 stage 的旧子命令保留可调用，便于回归对比。
+
+---
+
+## v3 计划（dev-v3 分支）
+
+v3 针对 v2 已暴露的方法论缺口与「为 10T 自研数据准备工程能力」两条主线，**只动以下四个 stage**，其他维度（S1 / S3 / S6 / S7 / S9 / S10）结论与 v2 保持一致。
+
+### v2 → v3 改动 diff
+
+| 优先级 | Stage | v2 现状 | 缺口 | v3 改动 | 类型 |
+|--------|-------|---------|------|---------|------|
+| P0 | S8 stem | EN+ZH 各 50 head 抽样，EAI-Distill 2.5s/条；ZH high_difficulty=0% 异常 | 全量推理吞吐不可行（10× vLLM 加速后仍 ~73K GPU·h）；head 抽样系统性偏向单一 row-group | 改 head→**分层抽样**（lang × style × char-length 桶），总 50K，复用 `src/sampling.py` 的 Vitter R；归因 ZH 难度异常 | 决策 + 抽样脚本 |
+| P1 | S2 toxicity | XLM-R 整篇打分 5K 采样，EN 11 / ZH 5 高位文档 | 人工核查显示高位 ≈ 100% 假阳性（文学引用、历史叙述、新闻报道被误判为"传播毒性"）。XLM-R 训练于社交媒体短文本，对教育百科长文档领域 mismatch | 二阶段方法：**chunk 切分（≤512 token）+ XLM-R 召回 + Qwen2.5-7B-Instruct 作为 LLM-judge 复审**（"discussing vs promoting"）。新增子命令 `toxicity-v3`，v2 子命令保留 | 方法 |
+| P2 | S5 contamination | MMLU 全量，文档级 0% / 段落级 2/698M；ZH 360M 无对应中文 benchmark | ZH 完全无 benchmark 覆盖；MMLU 是英文选择题，与 UFW 长文本形态不匹配 | 补 **CMMLU / C-Eval / AGIEval / GSM8K**（中文）+ HumanEval（保持 code-near/code-ast 一致性）；`benchmarks.py` 加 loader，对 ZH 全量重跑 | 覆盖 |
+| P3 | S4 minhash | 100K 跨 4 文件 head 采样，单机 OOM；自实现 MinHash 无法扩展到 TB 级 | 跨文件全量在自实现下不可达；为 10T 自研数据准备的分布式 dedup pipeline 未跑通 | 新建独立 conda env（隔离 `pyproject.toml` 主依赖），接入 **DataTrove `MinhashDedupSignature / Buckets / Cluster`**；`src/reader.py` 在 DataTrove 入口处搭桥，保 `Document` dict 契约不变；对 UFW-L3 全量 1.06B 文档跑通 | 工程 |
+
+### 交付顺序与理由
+
+**P0 → P1 → P2 → P3**（与优先级一致）。
+
+- **P0 先做**：工程量最小（抽样脚本改造），直接消除 v2 报告 §2.7 里"ZH 难度评估存疑"的悬而未决；且不依赖任何环境变更。
+- **P1 第二做**：v2 报告里 S2 toxicity 是仅有的 🟡 之一，方法论错（领域 mismatch），不修则 v3 报告该项仍不可信。LLM-judge 用本地 Qwen2.5-7B-Instruct，无外部依赖。
+- **P2 第三做**：中等工程量（多 benchmark loader + 全量 ZH 重跑），但路径清晰、无方法论风险，可与 P3 的环境准备并行启动。
+- **P3 放最后**：新 conda env + DataTrove 依赖较重，会触动 base 环境；放最后避免与其他改动相互污染。**P3 路径若卡住可独立延后到 v4 而不阻塞 v3 报告**。
+
+### 范围边界（v3 **不做**的事，明确写下来防止漂移）
+
+- v2 报告 `ufw_l3_profile_v2.md` 与 v2 各 stage 子命令的旧产物**不动**；v3 出新报告，对应字段标注「v2 → v3」回归对照。
+- S5 软匹配方法（SoftMatcha 2 / LLMSanitize 多路综合）**推迟到 v4**——v3 只动 benchmark 覆盖，不改方法，避免「补覆盖 + 改方法」两路混合无法归因。
+- S6 KenLM / FineWeb-Edu / DCLM 维持 SKIP（v2 已三组否决）；S7 Fast-DetectGPT、合成元数据维持 TODO；S8 parsability 维持「对自然语言不适用」结论不重跑；S1 / S3 / S10 全量结论沿用 v2。
+- S2 toxicity v3 走**新子命令**`toxicity-v3`，**不在原子命令上原地改**，保证回归路径可走。
+- 不为 v3 强行做 S2 toxicity / S5 contamination 的全量 EN 重跑——只在数据覆盖真的扩展（如 ZH benchmark）时才扩量。
+
+### v3 验收清单
+
+| 项 | 通过标准 |
+|----|---------|
+| P0 S8 | 分层抽样脚本落地，50K 样本跑出 FDC 分布，**ZH high_difficulty=0% 给出归因**（"语料偏通俗" vs "EAI 模型对中文校准偏低"，可与 ufw_zh_l3/qa 子集对照） |
+| P1 S2 | `toxicity-v3` 子命令实现；v2 高位文档（EN 11 / ZH 5）经 LLM-judge 复审后**假阳性率下降 ≥ 80%**；5K 采样重跑且新报告给出真实高位文档列表 |
+| P2 S5 | `benchmarks.py` 至少加入 CMMLU / C-Eval / GSM8K-zh 三个中文 loader；ZH 360M 全量重跑产出新 `aggregated_summary.json`；v3 报告 §2.5 含中文 benchmark 命中数 |
+| P3 S4 | DataTrove env 独立、`reader.py` 桥接通过；UFW-L3 全量 1.06B 跑出跨文件 near_dup 数值；新 stage 文档说明「为 10T 自研流水线服务」的定位 |
+
+---
+
 ## 执行编排（依赖与并行）
 
 > 编号 1–10 是**调研阶段**的维度分组，**不是执行顺序**。本节给出实际跑流水线时的依赖图、并行分组和启动顺序。
