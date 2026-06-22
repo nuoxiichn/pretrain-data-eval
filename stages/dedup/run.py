@@ -107,7 +107,8 @@ def exact(input_path, dataset, config_path, output_base, output_dir,
 # ── minhash ───────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.option("--input", "input_path", required=True)
+@click.option("-i", "--input", "input_paths", required=True, multiple=True,
+              help="可重复传入多个文件做跨文件采样")
 @click.option("--dataset", required=True)
 @click.option("--config", "config_path", default="configs/stage4.yaml", show_default=True)
 @click.option("--output-base", default="outputs/stage4", show_default=True)
@@ -122,27 +123,33 @@ def exact(input_path, dataset, config_path, output_base, output_dir,
 @click.option("--jaccard-threshold", default=None, type=float)
 @click.option("--num-bands", default=None, type=int)
 @click.option("--band-size", default=None, type=int)
-def minhash(input_path, dataset, config_path, output_base, output_dir,
+@click.option("--hot-bucket-cap", default=None, type=int,
+              help="LSH 桶上限；超过此值的桶（boilerplate 模板）跳过候选对生成")
+def minhash(input_paths, dataset, config_path, output_base, output_dir,
             input_format, max_docs, sample_mode, seed, num_hashes, ngram_size,
-            jaccard_threshold, num_bands, band_size):
-    """MinHash + LSH 近重复检测（word n-gram）"""
+            jaccard_threshold, num_bands, band_size, hot_bucket_cap):
+    """MinHash + LSH 近重复检测（two-phase streaming，支持多 input 跨文件）"""
+    import itertools
     cfg = _load_config(config_path)
     input_cfg = dict(cfg.get("input", {}))
     if input_format:
         input_cfg["format"] = input_format
     mh_cfg = cfg.get("minhash", {})
 
-    click.echo(f"[minhash] 读取 {input_path} ...")
-    docs = sample_documents(read_documents(input_path, config=input_cfg),
-                            max_docs, mode=sample_mode, seed=seed)
+    click.echo(f"[minhash] 读取 {len(input_paths)} 个 input ...")
+    chained = itertools.chain.from_iterable(
+        read_documents(p, config=input_cfg) for p in input_paths
+    )
+    docs = sample_documents(chained, max_docs, mode=sample_mode, seed=seed)
     if max_docs:
         click.echo(f"[minhash] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
 
-    _num_hashes = num_hashes or mh_cfg.get("num_hashes", 112)
+    _num_hashes = num_hashes or mh_cfg.get("num_hashes", 64)
     _ngram_size = ngram_size or mh_cfg.get("ngram_size", 5)
-    _jaccard_threshold = jaccard_threshold or mh_cfg.get("jaccard_threshold", 0.72)
-    _num_bands = num_bands or mh_cfg.get("num_bands", 14)
+    _jaccard_threshold = jaccard_threshold or mh_cfg.get("jaccard_threshold", 0.8)
+    _num_bands = num_bands or mh_cfg.get("num_bands", 8)
     _band_size = band_size or mh_cfg.get("band_size", 8)
+    _hot_cap = hot_bucket_cap or mh_cfg.get("hot_bucket_cap", 1000)
 
     if _num_hashes != _num_bands * _band_size:
         click.echo(
@@ -153,7 +160,8 @@ def minhash(input_path, dataset, config_path, output_base, output_dir,
 
     click.echo(
         f"[minhash] num_hashes={_num_hashes}, ngram={_ngram_size}, "
-        f"threshold={_jaccard_threshold}, bands={_num_bands}×{_band_size}"
+        f"threshold={_jaccard_threshold}, bands={_num_bands}×{_band_size}, "
+        f"hot_bucket_cap={_hot_cap}"
     )
 
     out_dir = _resolve_output(output_dir, output_base, dataset, "minhash")
@@ -171,6 +179,9 @@ def minhash(input_path, dataset, config_path, output_base, output_dir,
             num_bands=_num_bands,
             band_size=_band_size,
             on_doc=_write,
+            out_dir=out_dir,
+            hot_bucket_cap=_hot_cap,
+            log_fn=click.echo,
         )
 
     sm_path = write_summary(summary, out_dir)
@@ -178,6 +189,7 @@ def minhash(input_path, dataset, config_path, output_base, output_dir,
         f"[minhash] 近重复 {summary['near_dup_docs']} / {summary['total_docs']} 条"
         f" ({summary['near_dup_pct']:.1%})"
         f"  near_dup_pairs={summary['near_dup_pairs']}"
+        f"  hot_buckets_skipped={summary['num_hot_buckets_skipped']}"
     )
     click.echo(f"  -> {sm_path}")
     click.echo(f"  -> {per_doc_path}")

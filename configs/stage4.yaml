@@ -19,11 +19,12 @@ exact:
   min_para_chars: 50          # 段落长度下限，短于此不参与段落级去重
 
 minhash:
-  num_hashes: 112             # hash 函数数量
+  num_hashes: 64              # 64 = 8 bands × 8 rows，threshold≈0.80（DataTrove 通用值）
   ngram_size: 5               # word n-gram 大小
-  jaccard_threshold: 0.72     # 近重复判定阈值
-  num_bands: 14               # LSH bands（14 × 8 = 112，threshold ≈ 0.72）
+  jaccard_threshold: 0.8      # 近重复判定阈值
+  num_bands: 8                # LSH bands
   band_size: 8
+  hot_bucket_cap: 1000        # 单桶超过则跳过候选对（防 boilerplate O(B²) 爆炸）
 
 ngram:
   ngram_size: 13              # Dolma 默认 13-gram

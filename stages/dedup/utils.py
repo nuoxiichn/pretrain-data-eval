@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import hashlib
-import struct
 from collections import defaultdict
 from typing import Callable, Iterable
 
@@ -102,124 +101,303 @@ def compute_exact_dedup(
 
 
 # ── MinHash near-dedup ────────────────────────────────────────────────────────
+# Two-phase streaming impl, fits 100K–1M docs on a single box.
+# Phase 1: stream docs → signatures.npy + doc_ids.jsonl (text dropped after sig)
+# Phase 2: mmap signatures → banded LSH with per-bucket cap → Jaccard verify
+#
+# 旧实现 OOM 根因（在 100K 跨文件样本上 SIGKILL exit=137）：
+#   1) 每 ngram 算 num_hashes 次 MD5 → CPU 长时间占内存；
+#   2) bucket_map 在 boilerplate 上形成超热桶，O(B²) 候选对爆 set；
+#   3) 全部 doc + signature 常驻 RAM。
+# 新方案：xxhash + universal hashing 加速；签名落盘 mmap；hot_bucket_cap 截断。
 
-def _word_ngrams(text: str, n: int) -> set[str]:
+_MH_PRIME = (1 << 61) - 1
+_MH_MAX = (1 << 32) - 1
+
+
+def _mh_permutations(num_hashes: int, seed: int = 1):
+    rng = np.random.RandomState(seed)
+    a = rng.randint(1, _MH_PRIME, size=num_hashes, dtype=np.uint64)
+    b = rng.randint(0, _MH_PRIME, size=num_hashes, dtype=np.uint64)
+    return a, b
+
+
+_CJK_FRAC_THRESH = 0.3  # 文本中 CJK 字符占比超过此值视作中日韩文，走字符级 n-gram
+
+
+def _is_cjk_dominant(text: str) -> bool:
+    if not text:
+        return False
+    cjk = sum(1 for c in text if "　" <= c <= "鿿" or "가" <= c <= "힯")
+    return cjk / max(len(text), 1) > _CJK_FRAC_THRESH
+
+
+def _word_ngrams(text: str, n: int) -> list[str]:
+    """Word n-grams for whitespace-tokenized langs; char n-grams for CJK.
+
+    CJK 文本走 split() 几乎只剩 1-6 个"词"（无空格），所以按 5n 字符宽度
+    切 char-level shingles（n=5 → 25 字符），与 word n-gram 的语义覆盖近似。
+    """
+    if _is_cjk_dominant(text):
+        m = n * 5
+        s = text.replace(" ", "").replace("\n", "").replace("\t", "")
+        if len(s) < m:
+            return [s] if s else []
+        return [s[i : i + m] for i in range(len(s) - m + 1)]
     words = text.split()
     if len(words) < n:
-        return {" ".join(words)} if words else set()
-    return {" ".join(words[i : i + n]) for i in range(len(words) - n + 1)}
+        return [" ".join(words)] if words else []
+    return [" ".join(words[i : i + n]) for i in range(len(words) - n + 1)]
 
 
-def _minhash_signature(ngrams: set[str], num_hashes: int) -> np.ndarray:
-    """Compute MinHash signature using MD5-derived hash functions."""
-    sig = np.full(num_hashes, 0xFFFFFFFF, dtype=np.uint32)
-    for gram in ngrams:
-        gram_bytes = gram.encode("utf-8", errors="replace")
-        for i in range(num_hashes):
-            # Use (seed || gram) as input to get independent hash functions
-            seed = struct.pack("<I", i)
-            h = int(hashlib.md5(seed + gram_bytes).hexdigest()[:8], 16) & 0xFFFFFFFF
-            if h < sig[i]:
-                sig[i] = h
-    return sig
+def _minhash_signature_fast(ngrams: list[str], a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """xxhash + (a·h + b) mod prime 派生 K 个 MinHash 通道。比旧 MD5 实现快约 50×。"""
+    import xxhash
+    K = a.shape[0]
+    if not ngrams:
+        return np.full(K, _MH_MAX, dtype=np.uint32)
+    base = {xxhash.xxh3_64_intdigest(g.encode("utf-8", "replace")) for g in ngrams}
+    h = np.fromiter(base, dtype=np.uint64, count=len(base))
+    perm = (np.outer(a, h) + b[:, None]) % _MH_PRIME
+    return perm.min(axis=1).astype(np.uint32)
 
 
-def _lsh_buckets(sig: np.ndarray, num_bands: int, band_size: int) -> list[tuple]:
-    """Return LSH bucket keys for a signature."""
-    keys = []
-    for b in range(num_bands):
-        band = sig[b * band_size : (b + 1) * band_size]
-        keys.append((b, band.tobytes()))
-    return keys
+def compute_minhash_signatures(
+    docs: Iterable[Document],
+    out_dir,
+    *,
+    num_hashes: int = 64,
+    ngram_size: int = 5,
+    min_words: int = 5,
+    perm_seed: int = 1,
+    log_every: int = 10000,
+    log_fn: Callable[[str], None] | None = None,
+) -> dict:
+    """Phase 1: 流式扫描文档生成 MinHash 签名，落盘 signatures.npy / doc_ids.jsonl。"""
+    import json as _json
+    from pathlib import Path
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    a, b = _mh_permutations(num_hashes, seed=perm_seed)
+    sig_path = out_dir / "signatures.npy"
+    ids_path = out_dir / "doc_ids.jsonl"
+    chunks: list[np.ndarray] = []
+    buf: list[np.ndarray] = []
+    CHUNK = 4096
+    n = 0
+    skipped = 0
+    with ids_path.open("w", encoding="utf-8") as id_f:
+        for doc in docs:
+            text = str(doc.get("text") or "")
+            grams = _word_ngrams(text, ngram_size)
+            if len(grams) < min_words:
+                # 文本 ngram 太少（极短文档），给全 MAX 签名占位
+                skipped += 1
+                sig = np.full(num_hashes, _MH_MAX, dtype=np.uint32)
+            else:
+                sig = _minhash_signature_fast(grams, a, b)
+            buf.append(sig)
+            id_f.write(_json.dumps({"doc_id": str(doc["doc_id"])}) + "\n")
+            n += 1
+            if len(buf) >= CHUNK:
+                chunks.append(np.stack(buf))
+                buf.clear()
+            if log_fn and n % log_every == 0:
+                log_fn(f"[minhash] phase1: {n} docs")
+    if buf:
+        chunks.append(np.stack(buf))
+    sigs = np.concatenate(chunks) if chunks else np.empty((0, num_hashes), dtype=np.uint32)
+    np.save(sig_path, sigs)
+    return {
+        "n": n,
+        "skipped_short": skipped,
+        "num_hashes": num_hashes,
+        "ngram_size": ngram_size,
+        "signatures_path": str(sig_path),
+        "doc_ids_path": str(ids_path),
+    }
+
+
+def compute_minhash_lsh(
+    out_dir,
+    *,
+    num_bands: int = 8,
+    band_size: int = 8,
+    jaccard_threshold: float = 0.8,
+    hot_bucket_cap: int = 1000,
+    on_doc: Callable[[DocResult], None] | None = None,
+    log_fn: Callable[[str], None] | None = None,
+) -> tuple[list[DocResult], dict]:
+    """Phase 2: mmap 签名做 banded LSH，hot bucket 跳过候选对生成。"""
+    import json as _json
+    from pathlib import Path
+    out_dir = Path(out_dir)
+    sigs = np.load(out_dir / "signatures.npy", mmap_mode="r")
+    doc_ids = [
+        _json.loads(line)["doc_id"]
+        for line in (out_dir / "doc_ids.jsonl").open(encoding="utf-8")
+    ]
+    n, K = int(sigs.shape[0]), int(sigs.shape[1])
+    if K != num_bands * band_size:
+        raise ValueError(f"K={K} but num_bands*band_size={num_bands*band_size}")
+
+    bucket_map: dict[bytes, list[int]] = defaultdict(list)
+    for band in range(num_bands):
+        cs, ce = band * band_size, (band + 1) * band_size
+        prefix = bytes((band,))
+        for i in range(n):
+            bucket_map[prefix + sigs[i, cs:ce].tobytes()].append(i)
+        if log_fn:
+            log_fn(f"[minhash] phase2 band {band+1}/{num_bands} done")
+
+    cands: set[tuple[int, int]] = set()
+    hot = 0
+    nontriv = 0
+    max_b = 0
+    for idxs in bucket_map.values():
+        s = len(idxs)
+        if s < 2:
+            continue
+        nontriv += 1
+        max_b = max(max_b, s)
+        if s > hot_bucket_cap:
+            hot += 1
+            continue
+        for ia in range(s):
+            i = idxs[ia]
+            for ib in range(ia + 1, s):
+                j = idxs[ib]
+                cands.add((i, j) if i < j else (j, i))
+    del bucket_map
+    if log_fn:
+        log_fn(
+            f"[minhash] candidates={len(cands)} nontriv_buckets={nontriv} "
+            f"hot(>{hot_bucket_cap})={hot}"
+        )
+
+    pairs: list[tuple[int, int, float]] = []
+    for i, j in cands:
+        eq = int(np.count_nonzero(sigs[i] == sigs[j]))
+        jac = eq / K
+        if jac >= jaccard_threshold:
+            pairs.append((i, j, jac))
+    del cands
+
+    near_cnt: dict[int, int] = defaultdict(int)
+    jmax: dict[int, float] = defaultdict(float)
+    parent = list(range(n))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, j, jac in pairs:
+        near_cnt[i] += 1
+        near_cnt[j] += 1
+        if jac > jmax[i]:
+            jmax[i] = jac
+        if jac > jmax[j]:
+            jmax[j] = jac
+        ri, rj = _find(i), _find(j)
+        if ri != rj:
+            if ri < rj:
+                parent[rj] = ri
+            else:
+                parent[ri] = rj
+
+    csize: dict[int, int] = defaultdict(int)
+    for x in range(n):
+        csize[_find(x)] += 1
+    largest = max(csize.values(), default=0)
+    multi = sum(1 for v in csize.values() if v > 1)
+
+    per_doc: list[DocResult] = []
+    near = 0
+    for idx, did in enumerate(doc_ids):
+        c = near_cnt.get(idx, 0)
+        is_nd = c > 0
+        if is_nd:
+            near += 1
+        r = DocResult(
+            doc_id=did,
+            scores={
+                "jaccard_max": round(jmax.get(idx, 0.0), 4),
+                "near_dup_count": c,
+                "cluster_id": _find(idx),
+                "cluster_size": csize[_find(idx)],
+            },
+            flags={"is_near_dup": is_nd},
+        )
+        if on_doc is not None:
+            on_doc(r)
+        else:
+            per_doc.append(r)
+
+    summary = {
+        "total_docs": n,
+        "near_dup_docs": near,
+        "near_dup_pct": round(near / n, 4) if n else 0.0,
+        "near_dup_pairs": len(pairs),
+        "num_clusters_multi": multi,
+        "largest_cluster_size": largest,
+        "num_lsh_buckets_nontrivial": nontriv,
+        "num_hot_buckets_skipped": hot,
+        "hot_bucket_cap": hot_bucket_cap,
+        "max_bucket_size": max_b,
+        "jaccard_threshold": jaccard_threshold,
+        "num_hashes": K,
+        "num_bands": num_bands,
+        "band_size": band_size,
+    }
+    return per_doc, summary
 
 
 def compute_minhash_dedup(
     docs: Iterable[Document],
-    num_hashes: int = 112,
+    num_hashes: int = 64,
     ngram_size: int = 5,
-    jaccard_threshold: float = 0.72,
-    num_bands: int = 14,
+    jaccard_threshold: float = 0.8,
+    num_bands: int = 8,
     band_size: int = 8,
     on_doc: Callable[[DocResult], None] | None = None,
+    *,
+    out_dir=None,
+    hot_bucket_cap: int = 1000,
+    log_fn: Callable[[str], None] | None = None,
 ) -> tuple[list[DocResult], dict]:
-    """Detect near-duplicates using MinHash + LSH.
-
-    For audit purposes: works well up to ~100K docs in memory.
-    For TB-scale production dedup, use DataTrove's distributed MinHash pipeline.
-    """
-    doc_list = list(docs)
-    n = len(doc_list)
-
-    # ── compute signatures ────────────────────────────────────────────────────
-    signatures: list[np.ndarray] = []
-    doc_ids: list[str] = []
-    for doc in doc_list:
-        text = str(doc.get("text") or "")
-        ngrams = _word_ngrams(text, ngram_size)
-        sig = _minhash_signature(ngrams, num_hashes)
-        signatures.append(sig)
-        doc_ids.append(str(doc["doc_id"]))
-
-    # ── LSH: find candidate pairs ─────────────────────────────────────────────
-    bucket_map: dict[tuple, list[int]] = defaultdict(list)
-    for i, sig in enumerate(signatures):
-        for key in _lsh_buckets(sig, num_bands, band_size):
-            bucket_map[key].append(i)
-
-    # ── verify candidates with exact Jaccard estimate ─────────────────────────
-    near_dup_pairs: set[tuple[int, int]] = set()
-    for bucket_indices in bucket_map.values():
-        if len(bucket_indices) < 2:
-            continue
-        for a in range(len(bucket_indices)):
-            for b in range(a + 1, len(bucket_indices)):
-                i, j = bucket_indices[a], bucket_indices[b]
-                if (min(i, j), max(i, j)) in near_dup_pairs:
-                    continue
-                jaccard = float(np.mean(signatures[i] == signatures[j]))
-                if jaccard >= jaccard_threshold:
-                    near_dup_pairs.add((min(i, j), max(i, j)))
-
-    # ── aggregate per-doc near-dup counts ────────────────────────────────────
-    near_dup_count: dict[int, int] = defaultdict(int)
-    jaccard_max: dict[int, float] = defaultdict(float)
-    for i, j in near_dup_pairs:
-        jaccard = float(np.mean(signatures[i] == signatures[j]))
-        near_dup_count[i] += 1
-        near_dup_count[j] += 1
-        jaccard_max[i] = max(jaccard_max[i], jaccard)
-        jaccard_max[j] = max(jaccard_max[j], jaccard)
-
-    per_doc: list[DocResult] = []
-    near_dup_docs = 0
-
-    for idx, doc_id in enumerate(doc_ids):
-        cnt = near_dup_count[idx]
-        jmax = round(jaccard_max[idx], 4)
-        is_near_dup = cnt > 0
-        if is_near_dup:
-            near_dup_docs += 1
-
-        result = DocResult(
-            doc_id=doc_id,
-            scores={"jaccard_max": jmax, "near_dup_count": cnt},
-            flags={"is_near_dup": is_near_dup},
-        )
-        if on_doc is not None:
-            on_doc(result)
-        else:
-            per_doc.append(result)
-
-    total = n
-    summary = {
-        "total_docs": total,
-        "near_dup_docs": near_dup_docs,
-        "near_dup_pct": round(near_dup_docs / total, 4) if total else 0.0,
-        "near_dup_pairs": len(near_dup_pairs),
-        "jaccard_threshold": jaccard_threshold,
-        "num_hashes": num_hashes,
-        "ngram_size": ngram_size,
-    }
+    """Two-phase MinHash + LSH near-dedup. Streams to disk; OK for 1M docs."""
+    import tempfile
+    from pathlib import Path
+    cleanup = False
+    if out_dir is None:
+        out_dir = Path(tempfile.mkdtemp(prefix="minhash_sigs_"))
+        cleanup = True
+    else:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+    p1 = compute_minhash_signatures(
+        docs,
+        out_dir,
+        num_hashes=num_hashes,
+        ngram_size=ngram_size,
+        log_fn=log_fn,
+    )
+    per_doc, summary = compute_minhash_lsh(
+        out_dir,
+        num_bands=num_bands,
+        band_size=band_size,
+        jaccard_threshold=jaccard_threshold,
+        hot_bucket_cap=hot_bucket_cap,
+        on_doc=on_doc,
+        log_fn=log_fn,
+    )
+    summary["ngram_size"] = ngram_size
+    summary["skipped_short_docs"] = p1["skipped_short"]
+    if cleanup:
+        import shutil
+        shutil.rmtree(out_dir, ignore_errors=True)
     return per_doc, summary
 
 
