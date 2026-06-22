@@ -1,14 +1,16 @@
 """Stage 2 computation utilities.
 
-  compute_pii      — row 1+2: Presidio PII detection (general & code modes)
-  compute_secrets  — row 3:   Gitleaks secret scanning
-  compute_toxicity — row 4:   Detoxify toxicity classification
+  compute_pii         — row 1+2: Presidio PII detection (general & code modes)
+  compute_secrets     — row 3:   Gitleaks secret scanning
+  compute_toxicity    — row 4:   single-pass HF toxicity classifier (v2)
+  compute_toxicity_v3 — row 4 v3: chunk + XLM-R recall + Qwen LLM-judge
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from collections import Counter
@@ -420,3 +422,317 @@ def _dim_summary(values: list[float]) -> dict:
         "p99": round(float(np.percentile(a, 99)), 6),
         "max": round(float(a.max()), 6),
     }
+
+
+# ── Row 4 v3: chunk + XLM-R recall + Qwen LLM-judge ──────────────────────────
+
+_JUDGE_VERDICTS = ("benign", "discuss", "promote")
+
+_JUDGE_SYSTEM_PROMPT = (
+    "你是一位中英双语的内容安全审核员。给你一段文本，判断它在表达上属于以下三类的哪一类：\n"
+    "- benign: 内容本身不涉及任何有害议题。\n"
+    "- discuss: 文本提到、引用、批评或客观叙述有害内容（文学、历史、新闻、学术讨论），但作者立场是中立/批判/记录，"
+    "不鼓励、不煽动、不传播。\n"
+    "- promote: 作者立场是煽动、教唆、赞扬、传播仇恨/暴力/色情/违法行为，或以第一人称发表攻击性语言。\n"
+    "判断标准只看'作者立场'，不看话题本身是否敏感。\n"
+    '只输出一行严格 JSON：{"verdict": "benign|discuss|promote", "confidence": 0.0-1.0, "reason": "≤40字"}'
+)
+
+
+def _chunk_text_by_tokenizer(
+    text: str,
+    tokenizer,
+    chunk_size: int,
+    overlap: int,
+) -> list[tuple[int, int, str]]:
+    """Split ``text`` into chunks of ≤ ``chunk_size`` subwords with ``overlap``.
+
+    Returns ``[(char_start, char_end, chunk_text), ...]``. Always yields at least
+    one chunk (the full text if short). Uses ``return_offsets_mapping`` so the
+    chunk text can be sliced back from the original string — preserving original
+    formatting for the LLM judge.
+    """
+    text = text or ""
+    if not text:
+        return [(0, 0, "")]
+    enc = tokenizer(
+        text,
+        add_special_tokens=False,
+        truncation=False,
+        return_offsets_mapping=True,
+    )
+    offsets = enc["offset_mapping"]
+    n_tokens = len(offsets)
+    if n_tokens == 0:
+        return [(0, len(text), text)]
+    if n_tokens <= chunk_size:
+        return [(0, len(text), text)]
+
+    step = max(1, chunk_size - max(0, overlap))
+    chunks: list[tuple[int, int, str]] = []
+    i = 0
+    while i < n_tokens:
+        j = min(i + chunk_size, n_tokens)
+        s_char = offsets[i][0]
+        e_char = offsets[j - 1][1]
+        if e_char <= s_char:
+            i += step
+            continue
+        chunks.append((int(s_char), int(e_char), text[s_char:e_char]))
+        if j >= n_tokens:
+            break
+        i += step
+    return chunks
+
+
+def _parse_judge_output(raw: str) -> dict:
+    """Extract the JSON verdict from a Qwen completion. Falls back to ``benign``
+    with low confidence on parse failure so a malformed reply never crashes a run.
+    """
+    if not raw:
+        return {"verdict": "benign", "confidence": 0.0, "reason": "empty"}
+    m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
+    payload = m.group(0) if m else raw
+    try:
+        obj = json.loads(payload)
+    except Exception:
+        return {"verdict": "benign", "confidence": 0.0, "reason": "parse_error"}
+    verdict = str(obj.get("verdict", "benign")).strip().lower()
+    if verdict not in _JUDGE_VERDICTS:
+        verdict = "benign"
+    try:
+        conf = float(obj.get("confidence", 0.0))
+    except Exception:
+        conf = 0.0
+    reason = str(obj.get("reason", ""))[:120]
+    return {"verdict": verdict, "confidence": round(conf, 4), "reason": reason}
+
+
+def _make_qwen_judge(
+    model_path: str,
+    *,
+    max_tokens: int,
+    temperature: float,
+    gpu_memory_utilization: float,
+):
+    """Load Qwen-Instruct via vLLM. Returns ``judge(chunks) -> list[dict]``.
+
+    Each judgment dict has keys ``verdict / confidence / reason``. Caller is
+    responsible for not invoking this when there are zero chunks to judge.
+    """
+    from vllm import LLM, SamplingParams
+
+    llm = LLM(
+        model=model_path,
+        gpu_memory_utilization=gpu_memory_utilization,
+        dtype="bfloat16",
+        trust_remote_code=True,
+        enforce_eager=False,
+    )
+    tok = llm.get_tokenizer()
+    sampling = SamplingParams(
+        temperature=temperature,
+        top_p=1.0 if temperature == 0.0 else 0.9,
+        max_tokens=max_tokens,
+        stop=None,
+    )
+
+    def _build_prompt(chunk: str) -> str:
+        messages = [
+            {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+            {"role": "user", "content": f"<text>\n{chunk}\n</text>"},
+        ]
+        return tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+    def judge(chunks: list[str]) -> list[dict]:
+        if not chunks:
+            return []
+        prompts = [_build_prompt(c) for c in chunks]
+        outputs = llm.generate(prompts, sampling, use_tqdm=False)
+        out: list[dict] = []
+        for o in outputs:
+            text = o.outputs[0].text if o.outputs else ""
+            out.append(_parse_judge_output(text))
+        return out
+
+    return judge
+
+
+def compute_toxicity_v3(
+    docs: Iterable[Document],
+    recall_model_path: str,
+    judge_model_path: str,
+    *,
+    chunk_size: int = 512,
+    chunk_overlap: int = 64,
+    recall_threshold: float = 0.5,
+    recall_batch_size: int = 16,
+    judge_max_tokens: int = 256,
+    judge_temperature: float = 0.0,
+    judge_gpu_mem_util: float = 0.85,
+    judge_max_chunks_per_doc: int = 8,
+    device: str | None = None,
+    on_doc: Callable[[DocResult], None] | None = None,
+    judge_factory: Callable[..., Callable[[list[str]], list[dict]]] | None = None,
+) -> tuple[list[DocResult], dict]:
+    """Two-stage toxicity classification.
+
+    1. Chunk each doc with the XLM-R tokenizer (≤ ``chunk_size`` subwords,
+       ``chunk_overlap`` token overlap).
+    2. Run XLM-R binary classifier on every chunk — recall stage.
+    3. Send chunks with score ≥ ``recall_threshold`` (top ``judge_max_chunks_per_doc``
+       per doc by score) to Qwen-Instruct LLM-judge for the
+       benign / discuss / promote verdict.
+    4. ``high_risk`` (``flags.llm_promote``) requires at least one promote verdict.
+
+    ``judge_factory`` is injected for tests; defaults to ``_make_qwen_judge``.
+    """
+    from transformers import AutoTokenizer
+
+    doc_list = list(docs)
+    recall_predict, recall_mode = _make_hf_predictor(
+        recall_model_path, device=device, max_length=chunk_size
+    )
+    if recall_mode != "binary":
+        raise RuntimeError(
+            f"toxicity_v3 requires a binary recall model, got {recall_mode}"
+        )
+    recall_tok = AutoTokenizer.from_pretrained(recall_model_path)
+
+    # ── Stage 1: chunk + recall ─────────────────────────────────────────────
+    # Collect (doc_idx, chunk_idx, char_start, char_end, chunk_text, xlmr_score)
+    all_chunks: list[tuple[int, int, int, int, str]] = []
+    for di, doc in enumerate(doc_list):
+        text = str(doc.get("text") or "")
+        for ci, (s, e, ct) in enumerate(
+            _chunk_text_by_tokenizer(text, recall_tok, chunk_size, chunk_overlap)
+        ):
+            all_chunks.append((di, ci, s, e, ct))
+
+    chunk_scores: list[float] = [0.0] * len(all_chunks)
+    for i in range(0, len(all_chunks), recall_batch_size):
+        batch = all_chunks[i : i + recall_batch_size]
+        preds = recall_predict([c[4] for c in batch])
+        for k, s in enumerate(preds["toxicity"]):
+            chunk_scores[i + k] = float(s)
+
+    # ── Stage 2: pick recall hits, route to LLM-judge ───────────────────────
+    # Per doc → list of chunk indices with score ≥ threshold, capped + sorted.
+    doc_to_recalled: dict[int, list[int]] = {}
+    for idx, (di, *_rest) in enumerate(all_chunks):
+        if chunk_scores[idx] >= recall_threshold:
+            doc_to_recalled.setdefault(di, []).append(idx)
+    for di, lst in doc_to_recalled.items():
+        lst.sort(key=lambda i: chunk_scores[i], reverse=True)
+        if len(lst) > judge_max_chunks_per_doc:
+            doc_to_recalled[di] = lst[:judge_max_chunks_per_doc]
+
+    flat_recalled: list[int] = [i for lst in doc_to_recalled.values() for i in lst]
+    judgments: dict[int, dict] = {}
+    if flat_recalled:
+        factory = judge_factory or _make_qwen_judge
+        judge = factory(
+            judge_model_path,
+            max_tokens=judge_max_tokens,
+            temperature=judge_temperature,
+            gpu_memory_utilization=judge_gpu_mem_util,
+        )
+        verdicts = judge([all_chunks[i][4] for i in flat_recalled])
+        for i, v in zip(flat_recalled, verdicts):
+            judgments[i] = v
+
+    # ── Stage 3: aggregate per doc ──────────────────────────────────────────
+    per_doc: list[DocResult] = []
+    # Group chunk indices by doc.
+    chunks_by_doc: dict[int, list[int]] = {}
+    for idx, (di, *_rest) in enumerate(all_chunks):
+        chunks_by_doc.setdefault(di, []).append(idx)
+
+    total_chunks = len(all_chunks)
+    total_recalled_chunks = len(flat_recalled)
+    verdict_counter: Counter = Counter()
+    high_risk_count = 0
+    recalled_doc_count = 0
+    xlmr_max_dist: list[float] = []
+    xlmr_mean_dist: list[float] = []
+
+    for di, doc in enumerate(doc_list):
+        idxs = chunks_by_doc.get(di, [])
+        scores = [chunk_scores[i] for i in idxs]
+        xlmr_max = max(scores) if scores else 0.0
+        xlmr_mean = sum(scores) / len(scores) if scores else 0.0
+        xlmr_max_dist.append(xlmr_max)
+        xlmr_mean_dist.append(xlmr_mean)
+
+        recalled = doc_to_recalled.get(di, [])
+        chunk_judgments = []
+        n_promote = 0
+        n_discuss = 0
+        for i in recalled:
+            v = judgments.get(i)
+            if v is None:
+                continue
+            verdict_counter[v["verdict"]] += 1
+            if v["verdict"] == "promote":
+                n_promote += 1
+            elif v["verdict"] == "discuss":
+                n_discuss += 1
+            ci = all_chunks[i][1]
+            ct = all_chunks[i][4]
+            chunk_judgments.append({
+                "chunk_idx": ci,
+                "xlmr_score": round(chunk_scores[i], 6),
+                "verdict": v["verdict"],
+                "confidence": v["confidence"],
+                "reason": v["reason"],
+                "text_preview": ct[:200],
+            })
+
+        is_recalled = len(recalled) > 0
+        is_promote = n_promote > 0
+        if is_recalled:
+            recalled_doc_count += 1
+        if is_promote:
+            high_risk_count += 1
+
+        result = DocResult(
+            doc_id=str(doc["doc_id"]),
+            scores={
+                "xlmr_max": round(xlmr_max, 6),
+                "xlmr_mean": round(xlmr_mean, 6),
+                "n_chunks": len(idxs),
+                "n_chunks_recalled": len(recalled),
+                "n_chunks_promote": n_promote,
+                "n_chunks_discuss": n_discuss,
+                "judgments": chunk_judgments,
+            },
+            flags={
+                "recalled": is_recalled,
+                "llm_promote": is_promote,
+                "high_risk": is_promote,
+            },
+        )
+        if on_doc is not None:
+            on_doc(result)
+        else:
+            per_doc.append(result)
+
+    total = len(doc_list)
+    summary = {
+        "total_docs_scanned": total,
+        "total_chunks": total_chunks,
+        "recalled_chunks": total_recalled_chunks,
+        "recalled_docs": recalled_doc_count,
+        "high_risk_docs": high_risk_count,
+        "high_risk_pct": round(high_risk_count / total, 4) if total else 0.0,
+        "recall_threshold": recall_threshold,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "judge_max_chunks_per_doc": judge_max_chunks_per_doc,
+        "recall_model_path": recall_model_path,
+        "judge_model_path": judge_model_path,
+        "verdict_distribution": dict(verdict_counter),
+        "xlmr_max_stats": _dim_summary(xlmr_max_dist) if xlmr_max_dist else {},
+        "xlmr_mean_stats": _dim_summary(xlmr_mean_dist) if xlmr_mean_dist else {},
+    }
+    return per_doc, summary

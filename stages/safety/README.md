@@ -10,7 +10,8 @@
 |--------|--------|------|------|
 | `pii` | 行 1（通用文本）+ 行 2（代码语料） | Microsoft Presidio | 60+ 实体类型；通过 `--mode` 切换通用/代码模式 |
 | `secrets` | 行 3 | Gitleaks（二进制） | 高置信度 Secret 扫描，`--no-git` 模式逐文档扫描 |
-| `toxicity` | 行 4 | HF 文本分类模型 | 自动识别：多标签（detoxify 7 维）或二分类（xlmr 多语言） |
+| `toxicity` | 行 4 (v2) | HF 文本分类模型 | 整篇打分；自动识别多标签 / 二分类 |
+| `toxicity-v3` | 行 4 (v3) | XLM-R 召回 + Qwen2.5-7B-Instruct LLM-judge | chunk 切分（≤512 token）+ 召回 + 三类（benign/discuss/promote）复审；解决 v2 长文档「文学引用 / 历史叙述」误报 |
 
 > **BigCode PII scripts（行 2）**：原始实现需 git clone bigcode-dataset 仓库。
 > 本阶段用 Presidio + 代码专用实体列表（`EMAIL_ADDRESS`, `IP_ADDRESS`, `URL`, `CRYPTO`, `CREDIT_CARD`）近似替代，已覆盖主要模式。
@@ -81,6 +82,42 @@
 > PAN/CLEF 2024 共享任务官方分类器，覆盖 9+ 语言）。纯英文语料如需细粒度维度可用
 > detoxify unbiased。
 
+### toxicity-v3（v3：召回 + LLM-judge 复审）
+
+**动机**：v2 报告抽查显示 XLM-R 在 UFW-L3（教育/百科长文档）上把「文学引用、历史叙述、新闻
+报道」误判为 promote，假阳性 ≈ 100%。v3 引入二阶段流水线：
+
+1. **chunk** — 用 XLM-R tokenizer 把每文档切成 ≤512 子词的 chunk（含 overlap），避免长文档
+   被全文一次性强行截断。
+2. **召回** — XLM-R 二分类器对每个 chunk 打分，超过 `recall_threshold`（默认 0.5）的 chunk 进入复审。
+3. **LLM-judge** — Qwen2.5-7B-Instruct 复审每个召回 chunk，输出三类：
+   - `benign`  — 内容无关有害议题
+   - `discuss` — 提到/引用/批判/客观叙述（文学、历史、新闻、学术），作者立场中立 → **不算 high_risk**
+   - `promote` — 作者立场为煽动/教唆/赞扬/传播 → **算 high_risk**
+4. **聚合** — `flags.high_risk == flags.llm_promote`：至少一个 chunk 被判 `promote` 才算高位。
+
+```json
+{
+  "scores": {
+    "xlmr_max": 0.99, "xlmr_mean": 0.12,
+    "n_chunks": 6, "n_chunks_recalled": 2,
+    "n_chunks_promote": 0, "n_chunks_discuss": 2,
+    "judgments": [
+      {"chunk_idx": 3, "xlmr_score": 0.987, "verdict": "discuss",
+       "confidence": 0.92, "reason": "客观叙述 19 世纪伦敦贫民窟", "text_preview": "Charles Dickens..."}
+    ]
+  },
+  "flags": {"recalled": true, "llm_promote": false, "high_risk": false}
+}
+```
+
+配置见 `configs/stage2.yaml -> toxicity_v3:`。Judge 走本地 vLLM，需 GPU；与召回模型共卡时
+调低 `judge_gpu_mem_util`。
+
+**v2 高位文档复审**：`scripts/recheck_v2_high_risk.py` 自动从 `outputs/stage2/ufw_{en,zh}_l3/toxicity_v2/`
+取 high_risk doc_id，回查 parquet 原文，跑 toxicity-v3 复审，落
+`outputs/stage2/ufw_{en,zh}_l3/toxicity_v3_recheck/`，并产 `comparison.md` 对照表。
+
 ## 依赖
 
 ```
@@ -88,6 +125,7 @@ presidio-analyzer>=2.2
 presidio-anonymizer>=2.2
 spacy>=3.7
 transformers>=4.40    # toxicity：加载本地 HF 分类模型（detoxify / xlmr / COLD 等）
+vllm>=0.6             # toxicity-v3：LLM-judge 推理（Qwen2.5-7B-Instruct）
 ```
 
 毒性模型走本地 HF 目录（见 `configs/stage2.yaml` 的 `toxicity.model_path`），

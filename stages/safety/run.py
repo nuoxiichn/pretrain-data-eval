@@ -23,7 +23,12 @@ import yaml
 from src.reader import read_documents
 from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
 from src.schema import DocResult, make_output_dir, use_output_dir, write_per_doc, write_summary
-from stages.safety.utils import compute_pii, compute_secrets, compute_toxicity
+from stages.safety.utils import (
+    compute_pii,
+    compute_secrets,
+    compute_toxicity,
+    compute_toxicity_v3,
+)
 
 
 def _load_config(config_path: str) -> dict:
@@ -194,6 +199,78 @@ def toxicity(input_path, dataset, config_path, output_base, output_dir,
     click.echo(
         f"[toxicity] 高风险 {summary['high_risk_docs']} / {summary['total_docs_scanned']} 条"
         f" ({summary['high_risk_pct']:.1%})"
+    )
+    click.echo(f"  -> {sm_path}")
+    click.echo(f"  -> {per_doc_path}")
+
+
+# ── toxicity-v3 ───────────────────────────────────────────────────────────────
+
+@cli.command("toxicity-v3")
+@click.option("--input", "input_path", required=True)
+@click.option("--dataset", required=True)
+@click.option("--config", "config_path", default="configs/stage2.yaml", show_default=True)
+@click.option("--output-base", default="outputs/stage2", show_default=True)
+@click.option("--output-dir", default=None)
+@click.option("--input-format", default=None)
+@click.option("--max-docs", default=None, type=int)
+@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
+              show_default=True)
+@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
+@click.option("--recall-threshold", default=None, type=float,
+              help="覆盖 yaml 中的 toxicity_v3.recall_threshold")
+@click.option("--chunk-size", default=None, type=int)
+@click.option("--chunk-overlap", default=None, type=int)
+@click.option("--judge-max-chunks-per-doc", default=None, type=int)
+@click.option("--judge-gpu-mem-util", default=None, type=float)
+@click.option("--device", default=None, help="召回模型设备：cuda/cpu，默认自动")
+def toxicity_v3(input_path, dataset, config_path, output_base, output_dir,
+                input_format, max_docs, sample_mode, seed,
+                recall_threshold, chunk_size, chunk_overlap,
+                judge_max_chunks_per_doc, judge_gpu_mem_util, device):
+    """行 4 v3: chunk + XLM-R 召回 + Qwen LLM-judge 复审"""
+    cfg = _load_config(config_path)
+    input_cfg = dict(cfg.get("input", {}))
+    if input_format:
+        input_cfg["format"] = input_format
+    t3 = cfg.get("toxicity_v3", {})
+
+    click.echo(f"[toxicity-v3] 读取 {input_path} ...")
+    docs = sample_documents(read_documents(input_path, config=input_cfg),
+                            max_docs, mode=sample_mode, seed=seed)
+    if max_docs:
+        click.echo(f"[toxicity-v3] 抽样 {len(docs)} 条 (mode={sample_mode}, seed={seed})")
+
+    out_dir = _resolve_output(output_dir, output_base, dataset, "toxicity_v3")
+    per_doc_path = out_dir / "per_doc.jsonl"
+
+    with per_doc_path.open("w", encoding="utf-8") as f:
+        def _write(r: DocResult) -> None:
+            f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
+        _, summary = compute_toxicity_v3(
+            docs,
+            recall_model_path=t3.get("recall_model_path"),
+            judge_model_path=t3.get("judge_model_path"),
+            chunk_size=chunk_size if chunk_size is not None else t3.get("chunk_size", 512),
+            chunk_overlap=chunk_overlap if chunk_overlap is not None else t3.get("chunk_overlap", 64),
+            recall_threshold=recall_threshold if recall_threshold is not None
+                else t3.get("recall_threshold", 0.5),
+            recall_batch_size=t3.get("recall_batch_size", 16),
+            judge_max_tokens=t3.get("judge_max_tokens", 256),
+            judge_temperature=t3.get("judge_temperature", 0.0),
+            judge_gpu_mem_util=judge_gpu_mem_util if judge_gpu_mem_util is not None
+                else t3.get("judge_gpu_mem_util", 0.85),
+            judge_max_chunks_per_doc=judge_max_chunks_per_doc if judge_max_chunks_per_doc is not None
+                else t3.get("judge_max_chunks_per_doc", 8),
+            device=device,
+            on_doc=_write,
+        )
+
+    sm_path = write_summary(summary, out_dir)
+    click.echo(
+        f"[toxicity-v3] 召回 {summary['recalled_chunks']}/{summary['total_chunks']} chunks  "
+        f"→ promote {summary['high_risk_docs']}/{summary['total_docs_scanned']} docs "
+        f"({summary['high_risk_pct']:.2%})  verdicts={summary['verdict_distribution']}"
     )
     click.echo(f"  -> {sm_path}")
     click.echo(f"  -> {per_doc_path}")
