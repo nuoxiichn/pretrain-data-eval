@@ -33,10 +33,22 @@ DATASETS = {
 
 
 def out_name_to_parquet(dataset_dir: Path, out_dirname: str) -> Path | None:
-    """outputs 目录名 multi_style__part-00000-...snappy → 原始 parquet 路径。"""
-    rel = out_dirname.replace("__", "/") + ".parquet"
-    p = dataset_dir / rel
-    return p if p.exists() else None
+    """outputs 目录名 → 原始 parquet 路径。
+
+    兼容两种命名：
+    - 旧 pii / 当前 secrets：`multi_style__part-XXX...snappy` → multi_style/part-XXX...snappy.parquet
+    - pii_v2：`part-XXX...snappy` → 在 multi_style/ 和 qa/ 下查找
+    """
+    if "__" in out_dirname:
+        rel = out_dirname.replace("__", "/") + ".parquet"
+        p = dataset_dir / rel
+        return p if p.exists() else None
+    fname = out_dirname + ".parquet"
+    for sub in ("multi_style", "qa"):
+        p = dataset_dir / sub / fname
+        if p.exists():
+            return p
+    return None
 
 
 def load_content_map(parquet_path: Path, wanted: set[str]) -> dict[str, str]:
@@ -64,7 +76,10 @@ def slice_span(text: str, start: int, end: int) -> tuple[str, str]:
 
 
 def collect_pii(dataset: str, dataset_dir: Path, lines: list[str]) -> None:
-    pii_root = OUT_STAGE2 / dataset / "pii"
+    # pii_v2 是当前过滤后的规范输出；旧 pii/ 用作历史回查不再扫
+    pii_root = OUT_STAGE2 / dataset / "pii_v2"
+    if not pii_root.is_dir():
+        pii_root = OUT_STAGE2 / dataset / "pii"  # 回退到旧目录
     if not pii_root.is_dir():
         return
     # 按 entity_type 分组收集，每组 MAX_PER_GROUP 条
