@@ -304,6 +304,13 @@ def extraction(input_path, dataset, config_path, output_base, output_dir,
         _, summary = compute_extraction_audit(
             docs,
             short_stub_chars=ex_cfg.get("short_stub_chars", 100),
+            html_tag_min_count=ex_cfg.get("html_tag_min_count", 3),
+            html_entity_min_count=ex_cfg.get("html_entity_min_count", 1),
+            boilerplate_edge_ratio=ex_cfg.get("boilerplate_edge_ratio", 0.05),
+            boilerplate_edge_min_chars=ex_cfg.get("boilerplate_edge_min_chars", 200),
+            boilerplate_middle_weight=ex_cfg.get("boilerplate_middle_weight", 0.2),
+            boilerplate_weighted_threshold=ex_cfg.get("boilerplate_weighted_threshold", 2.0),
+            risk_score_threshold=ex_cfg.get("risk_score_threshold", 2.0),
             on_doc=_write,
         )
 

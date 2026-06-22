@@ -26,6 +26,15 @@ quality:                      # Gopher Quality + C4，中英双语适配（jieba
 
 extraction:                   # 行 1：抽取质量审计（已清洗文本残留检测）
   short_stub_chars: 50        # 正文 < 此字符数视为抽取残桩；按字符计对 CJK 更公平
+  # v2 阈值（2026-06 改造）：HTML 走白名单 + 计数阈值，boilerplate 加位置权重，
+  # 汇总红灯改加权风险分而非 OR-gate。改阈值前看 README「extraction」章节。
+  html_tag_min_count: 3                 # 白名单 HTML 标签至少出现 N 次才算残留
+  html_entity_min_count: 1              # &amp; / &nbsp; 这类实体出现 N 次即触发
+  boilerplate_edge_ratio: 0.05          # 头/尾区比例
+  boilerplate_edge_min_chars: 200       # 头/尾区至少 N 字符（兜底短文）
+  boilerplate_middle_weight: 0.2        # 中段命中权重（头/尾权重 1.0）
+  boilerplate_weighted_threshold: 2.0   # 加权和 >= 此值才算 has_boilerplate
+  risk_score_threshold: 2.0             # 总风险分 >= 此值才算 low_extraction_quality
 
 glotlid:
   model_path: /mnt/public/model/glotlid/model.bin   # GlotLID v3（共享区，fasttext 直接加载）

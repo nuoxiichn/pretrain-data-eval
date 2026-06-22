@@ -34,15 +34,22 @@
 ```json
 {
   "scores": {"char_count": 1840, "html_tag_count": 0, "html_entity_count": 0,
-             "markdown_artifact_count": 0, "url_count": 1, "boilerplate_count": 1, "mojibake_count": 0},
-  "flags": {"has_html_residue": false, "has_boilerplate": true, "has_mojibake": false,
-            "too_short_stub": false, "low_extraction_quality": true}
+             "markdown_artifact_count": 0, "url_count": 1, "boilerplate_count": 1,
+             "boilerplate_weighted": 0.2, "mojibake_count": 0,
+             "extraction_risk_score": 0.1},
+  "flags": {"has_html_residue": false, "has_boilerplate": false, "has_mojibake": false,
+            "too_short_stub": false, "low_extraction_quality": false}
 }
 ```
 
-- `low_extraction_quality`：汇总红灯 —— HTML 残留 / mojibake / boilerplate / 残桩任一命中
-- `summary` 含各残留率 + `boilerplate_phrase_distribution`（命中的样板短语 top20）
+判定口径（v2，2026-06 改造，原始误报率过高已替换为加权风险分）：
+
+- **HTML 残留**：标签名走白名单（绕开 `<code>` `<source>` `<var>` 这类常用作代码 metavar 的标签），需累计 `html_tag_min_count` 次（默认 3）才算；HTML 实体 `&amp;` `&nbsp;` 出现 `html_entity_min_count` 次（默认 1）即触发
+- **Boilerplate**：按出现位置加权——文档头/尾区（首尾各 5% 字符或至少 200 字符）权重 1.0，中段权重 0.2；加权和 ≥ `boilerplate_weighted_threshold`（默认 2.0）才算样板污染
+- **`low_extraction_quality`** 改成加权风险分：`score = 3·too_short + 2·has_mojibake + 2·has_html + min(boiler_weighted/2, 2)`；分数 ≥ `risk_score_threshold`（默认 2.0）才亮红灯。残桩/mojibake/HTML 单独命中即可亮灯；boilerplate 需加权 ≥ 4（约 4 处头/尾命中）才单独亮灯，避免「正文中 1 次版权声明」一刀切
 - 残桩判定按**字符数**（`short_stub_chars`，默认 50），对 CJK 比词数公平
+- `summary` 含各残留率 + `extraction_risk_score_mean` + `boilerplate_phrase_distribution`（命中样板短语 top20）
+- 所有阈值在 `configs/stage3.yaml::extraction` 下可调
 
 ### langid
 ```json

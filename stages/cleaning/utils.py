@@ -184,8 +184,12 @@ def _gopher_quality(text: str, lang: str | None) -> tuple[bool, str | None]:
             return False, "too_many_bullet_lines"
         if sum(1 for l in lines if l.rstrip().endswith(("...", "…"))) / len(lines) > 0.3:
             return False, "too_many_ellipsis_lines"
-    # ≥80% 的词须含至少一个字母字符（CJK 标点密度高，阈值降至 0.6）
-    min_alpha_ratio = 0.6 if _is_cjk_lang(lang) else 0.8
+    # 词中含至少一个字母字符的比例下限。
+    # DataTrove 默认 EN 0.8，但 0.8 对成品数据（学术文献、参考书目、教育材料）的
+    # 高数字/引用密度文本误报严重——UFW-L3 EN 抽样 20 条命中里 19 条是真实学术
+    # 内容（PMID、DOI、年份、化学单位），FP ~95%。这里把 EN 也下调到 0.6，与
+    # CJK 保持一致；真正的网页噪声（导航/标签云）通常 ratio < 0.5，仍会被命中。
+    min_alpha_ratio = 0.6
     if sum(1 for w in words if any(c.isalpha() for c in w)) / n_words < min_alpha_ratio:
         return False, "too_many_non_alpha_words"
     # 停用词：CJK 用中文集，英文用英文集
@@ -322,8 +326,36 @@ def compute_quality(
 # 无对象可抽。故重定位为「抽取质量审计」：检测已清洗文本里残留的、本应被上游
 # 抽取/清洗去掉的杂质，作为「抽取干净程度」的只读信号。不依赖 Trafilatura。
 
-# HTML 标签：<tag ...> 或 </tag>（要求 < 紧跟字母，避开数学式 a < b、表情 <3）
-_HTML_TAG_RE = _re.compile(r"</?[a-zA-Z][a-zA-Z0-9]*(?:\s[^<>]*)?>")
+# HTML 标签白名单：只匹配真实 HTML 结构/语义标签，绕开技术文档里常见的代码占位
+# （<code>, <source>, <var>, <kbd>, <samp>, <output> 等被故意排除——它们也是合法
+# HTML 但在 rsync/eval/CLI 教程里常被当作 metavar，命中后 100% 误报）。
+_HTML_TAG_WHITELIST = (
+    # 结构 / 文档级
+    "html", "head", "body", "title", "meta", "link", "script", "style", "noscript",
+    "div", "span", "p", "br", "hr",
+    # 标题 / 语义块
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "header", "footer", "nav", "section", "article", "aside", "main",
+    "figure", "figcaption", "blockquote", "pre", "address",
+    # 表格
+    "table", "tr", "td", "th", "thead", "tbody", "tfoot",
+    "caption", "colgroup", "col",
+    # 列表
+    "ul", "ol", "li", "dl", "dt", "dd",
+    # 表单
+    "form", "input", "button", "label", "textarea", "select", "option",
+    "optgroup", "fieldset", "legend",
+    # 媒体
+    "iframe", "img", "picture", "video", "audio", "canvas", "svg",
+    # 链接 / 老式样式
+    "a", "font", "center",
+    # 详情 / 对话
+    "details",
+)
+_HTML_TAG_RE = _re.compile(
+    r"</?(?:" + "|".join(_HTML_TAG_WHITELIST) + r")(?:\s[^<>]*)?/?>",
+    _re.IGNORECASE,
+)
 # HTML 实体：&amp; &nbsp; &#39; &#x27; 等
 _HTML_ENTITY_RE = _re.compile(r"&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);")
 # markdown 链接/图片残留：](url) 与 ![
@@ -353,20 +385,36 @@ def compute_extraction_audit(
     docs: Iterable[Document],
     *,
     short_stub_chars: int = 50,
+    html_tag_min_count: int = 3,
+    html_entity_min_count: int = 1,
+    boilerplate_edge_ratio: float = 0.05,
+    boilerplate_edge_min_chars: int = 200,
+    boilerplate_middle_weight: float = 0.2,
+    boilerplate_weighted_threshold: float = 2.0,
+    risk_score_threshold: float = 2.0,
     on_doc: Callable[[DocResult], None] | None = None,
 ) -> tuple[list[DocResult], dict]:
     """审计已清洗文本的抽取质量：检测 HTML/实体/markdown/boilerplate/mojibake 残留。
 
-    scores 放原始计数/比率，flags 放布尔红绿灯。`low_extraction_quality` 是
-    汇总红灯：命中任一主要残留（HTML/mojibake）、boilerplate，或正文过短（抽取
-    失败留下残桩）即为 True。
+    判定改造（v2，2026-06）：
+    - HTML：标签名走白名单（绕开 <code>/<source> 这类代码 metavar），且需累计
+      `html_tag_min_count` 次才算残留；HTML 实体出现 `html_entity_min_count` 次即触发。
+    - Boilerplate：按出现位置加权——文档头/尾区（`boilerplate_edge_ratio` * char 或
+      至少 `boilerplate_edge_min_chars` 字符）权重 1.0，中段权重 `boilerplate_middle_weight`，
+      加权和达 `boilerplate_weighted_threshold` 才算样板污染。
+    - 汇总红灯 `low_extraction_quality` 不再是 OR-gate，而是加权风险分：
+        score = 3·too_short + 2·has_mojibake + 2·has_html + min(boiler_weighted/2, 2)
+      分数 >= `risk_score_threshold` 才算红灯。短残桩/mojibake 单独命中即可亮灯；
+      HTML（已严苛阈值）单独命中也亮灯；boilerplate 需要权重 >= 4（约 4 处头/尾命中
+      或更多中段命中）才能单独亮灯，避免「正文中 1 次版权声明」一刀切。
 
-    short_stub_chars 用字符数（非词数）判断残桩，对 CJK 更公平（中文无空格分词）；
-    默认 50，只命中 "404 Not Found" / "页面不存在" 这类近空抽取，不误伤短段落。
+    short_stub_chars 用字符数（非词数）判断残桩，对 CJK 更公平（默认 50，只命中
+    "404 Not Found" / "页面不存在" 这类近空抽取）。
     """
     per_doc: list[DocResult] = []
     total = 0
     n_html = n_entity = n_md = n_url = n_boiler = n_mojibake = n_short = n_lowq = 0
+    risk_score_sum = 0.0
     boiler_phrase_counter: _Counter = _Counter()
 
     for doc in docs:
@@ -379,15 +427,38 @@ def compute_extraction_audit(
         urls = len(_URL_RE.findall(text))
         mojibake = text.count(_REPLACEMENT_CHAR)
 
-        boiler = _BOILERPLATE_EN_RE.findall(text) + _BOILERPLATE_ZH_RE.findall(text)
-        for ph in boiler:
-            boiler_phrase_counter[ph.lower()] += 1
+        # Boilerplate 位置加权：头/尾权重 1.0，中段 0.2
+        edge = max(boilerplate_edge_min_chars, int(n_chars * boilerplate_edge_ratio))
+        head_end = edge
+        tail_start = max(n_chars - edge, head_end)
+        boiler_weighted = 0.0
+        boiler_count = 0
+        for rx in (_BOILERPLATE_EN_RE, _BOILERPLATE_ZH_RE):
+            for m in rx.finditer(text):
+                pos = m.start()
+                if pos < head_end or pos >= tail_start:
+                    boiler_weighted += 1.0
+                else:
+                    boiler_weighted += boilerplate_middle_weight
+                boiler_phrase_counter[m.group(0).lower()] += 1
+                boiler_count += 1
 
-        has_html = html_tags > 0 or html_entities > 0
-        has_boiler = len(boiler) > 0
+        has_html = (
+            html_tags >= html_tag_min_count or html_entities >= html_entity_min_count
+        )
+        has_boiler = boiler_weighted >= boilerplate_weighted_threshold
         has_mojibake = mojibake > 0
         too_short = 0 < n_chars < short_stub_chars
-        low_quality = has_html or has_mojibake or has_boiler or too_short
+
+        risk_score = 0.0
+        if too_short:
+            risk_score += 3.0
+        if has_mojibake:
+            risk_score += 2.0
+        if has_html:
+            risk_score += 2.0
+        risk_score += min(boiler_weighted / 2.0, 2.0)
+        low_quality = risk_score >= risk_score_threshold
 
         n_html += int(has_html)
         n_entity += int(html_entities > 0)
@@ -397,6 +468,7 @@ def compute_extraction_audit(
         n_mojibake += int(has_mojibake)
         n_short += int(too_short)
         n_lowq += int(low_quality)
+        risk_score_sum += risk_score
         total += 1
 
         result = DocResult(
@@ -407,8 +479,10 @@ def compute_extraction_audit(
                 "html_entity_count": html_entities,
                 "markdown_artifact_count": md_artifacts,
                 "url_count": urls,
-                "boilerplate_count": len(boiler),
+                "boilerplate_count": boiler_count,
+                "boilerplate_weighted": round(boiler_weighted, 3),
                 "mojibake_count": mojibake,
+                "extraction_risk_score": round(risk_score, 3),
             },
             flags={
                 "has_html_residue": has_html,
@@ -440,6 +514,7 @@ def compute_extraction_audit(
         "short_stub_docs": n_short,
         "low_extraction_quality_docs": n_lowq,
         "low_extraction_quality_pct": _pct(n_lowq),
+        "extraction_risk_score_mean": round(risk_score_sum / total, 4) if total else 0.0,
         "boilerplate_phrase_distribution": dict(boiler_phrase_counter.most_common(20)),
     }
     return per_doc, summary
