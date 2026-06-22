@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from collections import Counter
 from pathlib import Path
+
+import numpy as np
 
 
 def _find_summaries(base_dir: Path) -> list[dict]:
@@ -73,47 +76,87 @@ def _recompute_pct(total: int, count: int) -> float:
     return round(count / total, 6) if total > 0 else 0.0
 
 
-def _collect_per_doc_values(base_dir: Path, score_field: str) -> list[float]:
-    """从 per_doc.jsonl 中收集某个 scores 字段的所有值（用于重算 percentile）。"""
-    values = []
-    for p in sorted(base_dir.rglob("per_doc.jsonl")):
-        with p.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                row = json.loads(line)
-                scores = row.get("scores", {})
-                if score_field in scores:
-                    v = scores[score_field]
-                    if isinstance(v, (int, float)):
-                        values.append(float(v))
-    return values
+def _collect_per_doc_values(base_dir: Path, score_fields: list[str] | str,
+                            dtype=np.uint32) -> dict[str, np.ndarray]:
+    """流式扫 per_doc.jsonl 抽 scores 中的数值字段，返回 dict[field -> np.ndarray].
+
+    旧实现是 list[float]（每元素 ~28B），698M 行会吃 ~30GB；新实现 per-file bulk read
+    + `re.findall` (C 实现) + numpy uint32 数组累积，内存降到 ~3GB、速度 ~5×。
+    np.percentile 用 partition 算法 O(n) 给精确分位。
+    """
+    import re as _re
+    if isinstance(score_fields, str):
+        score_fields = [score_fields]
+    pats = {
+        f: _re.compile(rb'"' + f.encode() + rb'":\s*(-?\d+(?:\.\d+)?)')
+        for f in score_fields
+    }
+    parts: dict[str, list[np.ndarray]] = {f: [] for f in score_fields}
+
+    files = sorted(base_dir.rglob("per_doc.jsonl"))
+    if not files:
+        return {f: np.empty(0, dtype=dtype) for f in score_fields}
+
+    t0 = time.monotonic()
+    last_log = t0
+    total_lines = 0
+
+    for p in files:
+        with p.open("rb") as fh:
+            buf = fh.read()
+        total_lines += buf.count(b"\n")
+        for f, pat in pats.items():
+            matches = pat.findall(buf)
+            if matches:
+                # bytes → uint32/float32：np.array 在 list[bytes] 上是 C 实现
+                parts[f].append(np.array(matches, dtype=dtype))
+        del buf
+        now = time.monotonic()
+        if now - last_log >= 30:
+            rate = total_lines / max(now - t0, 1e-6) / 1e6
+            print(f"[INFO] percentile collect: {total_lines/1e6:.1f}M lines, {rate:.2f} M/s")
+            last_log = now
+
+    out: dict[str, np.ndarray] = {}
+    for f in score_fields:
+        out[f] = np.concatenate(parts[f]) if parts[f] else np.empty(0, dtype=dtype)
+        parts[f].clear()
+
+    dt = time.monotonic() - t0
+    sizes = {k: int(v.size) for k, v in out.items()}
+    print(f"[INFO] percentile collect done: {total_lines/1e6:.1f}M lines in {dt:.1f}s "
+          f"({total_lines/max(dt,1e-6)/1e6:.2f} M/s); fields={sizes}")
+    return out
 
 
-def _percentiles(values: list[float]) -> dict:
-    if not values:
+def _percentiles(arr: np.ndarray) -> dict:
+    """精确 percentile + mean/min/max/total，O(n) partition；698M float32 约 30s。"""
+    if arr.size == 0:
         return {}
-    values.sort()
-    n = len(values)
-    def _p(q: float) -> float:
-        idx = q * (n - 1)
-        lo = int(idx)
-        hi = min(lo + 1, n - 1)
-        frac = idx - lo
-        return round(values[lo] + frac * (values[hi] - values[lo]), 2)
+    is_float = np.issubdtype(arr.dtype, np.floating)
+    qs = [25, 50, 75, 90, 95, 99]
+    pvals = np.percentile(arr, qs)
+    def _r(x):
+        return round(float(x), 2)
+    if is_float:
+        return {
+            "count": int(arr.size),
+            "total": round(float(arr.sum(dtype=np.float64)), 2),
+            "mean": _r(arr.mean(dtype=np.float64)),
+            "min": _r(arr.min()),
+            "max": _r(arr.max()),
+            "p25": _r(pvals[0]), "p50": _r(pvals[1]), "p75": _r(pvals[2]),
+            "p90": _r(pvals[3]), "p95": _r(pvals[4]), "p99": _r(pvals[5]),
+        }
+    # 整数字段：sum/min/max 保持整数，percentile 保留 .0 但用整数显示
     return {
-        "count": n,
-        "total": round(sum(values), 2),
-        "mean": round(sum(values) / n, 2),
-        "min": values[0],
-        "max": values[-1],
-        "p25": _p(0.25),
-        "p50": _p(0.50),
-        "p75": _p(0.75),
-        "p90": _p(0.90),
-        "p95": _p(0.95),
-        "p99": _p(0.99),
+        "count": int(arr.size),
+        "total": int(arr.sum(dtype=np.int64)),
+        "mean": _r(arr.mean(dtype=np.float64)),
+        "min": int(arr.min()),
+        "max": int(arr.max()),
+        "p25": _r(pvals[0]), "p50": _r(pvals[1]), "p75": _r(pvals[2]),
+        "p90": _r(pvals[3]), "p95": _r(pvals[4]), "p99": _r(pvals[5]),
     }
 
 
@@ -212,13 +255,15 @@ def merge_stats(summaries: list[dict], base_dir: Path) -> dict:
             if "tokens" in v:
                 v["pct_tokens"] = round(v["tokens"] / g_total, 6)
 
-    char_stats = _collect_per_doc_values(base_dir, "char_count")
-    token_stats_vals = _collect_per_doc_values(base_dir, "token_count")
+    # 一次扫描 per_doc.jsonl 抽 char_count + token_count，numpy uint32 累积
+    vals = _collect_per_doc_values(base_dir, ["char_count", "token_count"], dtype=np.uint32)
+    char_arr = vals.get("char_count", np.empty(0, dtype=np.uint32))
+    tok_arr = vals.get("token_count", np.empty(0, dtype=np.uint32))
 
     result = {
         "total_docs": total,
-        "char_stats": _percentiles(char_stats) if char_stats else _sum_stats(summaries, "char_stats"),
-        "token_stats": _percentiles(token_stats_vals) if token_stats_vals else _sum_stats(summaries, "token_stats"),
+        "char_stats": _percentiles(char_arr) if char_arr.size else _sum_stats(summaries, "char_stats"),
+        "token_stats": _percentiles(tok_arr) if tok_arr.size else _sum_stats(summaries, "token_stats"),
         "length_buckets": buckets,
         "domain_distribution": domains,
         "language_distribution": languages,
@@ -231,8 +276,8 @@ def merge_stats(summaries: list[dict], base_dir: Path) -> dict:
         },
         "aggregated_from": len(summaries),
     }
-    if char_stats:
-        result["note"] = "char_stats/token_stats 从 per_doc.jsonl 精确重算"
+    if char_arr.size:
+        result["note"] = "char_stats/token_stats 从 per_doc.jsonl 精确重算（numpy uint32）"
     else:
         result["note"] = "char_stats/token_stats 为各文件 total/count 的加权近似（无 per_doc 数据）"
     return result
