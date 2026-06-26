@@ -288,6 +288,16 @@ def compute_stem(
     high_diff_count = 0
     parse_failed_count = 0
 
+    # 按 source（如 ultrafineweb_multi_style / ultrafineweb_qa）拆分，
+    # 供 ZH high_difficulty=0% 归因等子分布分析。
+    src_total: Counter[str] = Counter()
+    src_stem: Counter[str] = Counter()
+    src_high_diff: Counter[str] = Counter()
+    src_parse_failed: Counter[str] = Counter()
+    src_fdc: dict[str, Counter[int]] = {}
+    src_rd: dict[str, Counter[int]] = {}
+    src_edu: dict[str, Counter[int]] = {}
+
     n = len(doc_list)
     for start_i in range(0, n, batch_size):
         batch_docs = doc_list[start_i : start_i + batch_size]
@@ -367,12 +377,49 @@ def compute_stem(
             if high_diff:
                 high_diff_count += 1
 
+            src = str(doc.get("source") or "unknown")
+            src_total[src] += 1
+            if parsed["parse_failed"]:
+                src_parse_failed[src] += 1
+            if is_stem:
+                src_stem[src] += 1
+            if high_diff:
+                src_high_diff[src] += 1
+            if top_cls is not None:
+                src_fdc.setdefault(src, Counter())[top_cls] += 1
+            if rd is not None:
+                src_rd.setdefault(src, Counter())[rd] += 1
+            if parsed["educational_level"] is not None:
+                src_edu.setdefault(src, Counter())[parsed["educational_level"]] += 1
+
     fdc_top_distribution = {}
     for cls, label in FDC_TOP_LABELS.items():
         cnt = fdc_counter.get(cls, 0)
         fdc_top_distribution[f"{cls:03d} {label}"] = {
             "docs": cnt,
             "pct": round(cnt / n, 4) if n else 0.0,
+        }
+
+    source_breakdown: dict[str, dict] = {}
+    for src, src_n in src_total.items():
+        src_fdc_dist = {}
+        for cls, label in FDC_TOP_LABELS.items():
+            cnt = src_fdc.get(src, Counter()).get(cls, 0)
+            src_fdc_dist[f"{cls:03d} {label}"] = {
+                "docs": cnt,
+                "pct": round(cnt / src_n, 4) if src_n else 0.0,
+            }
+        source_breakdown[src] = {
+            "total_docs": src_n,
+            "stem_docs": src_stem.get(src, 0),
+            "stem_pct": round(src_stem.get(src, 0) / src_n, 4) if src_n else 0.0,
+            "high_difficulty_docs": src_high_diff.get(src, 0),
+            "high_difficulty_pct": round(src_high_diff.get(src, 0) / src_n, 4) if src_n else 0.0,
+            "parse_failed_docs": src_parse_failed.get(src, 0),
+            "parse_failed_pct": round(src_parse_failed.get(src, 0) / src_n, 4) if src_n else 0.0,
+            "fdc_top_distribution": src_fdc_dist,
+            "reasoning_depth_distribution": dict(sorted(src_rd.get(src, Counter()).items())),
+            "educational_level_distribution": dict(sorted(src_edu.get(src, Counter()).items())),
         }
 
     summary = {
@@ -386,6 +433,7 @@ def compute_stem(
         "fdc_top_distribution": fdc_top_distribution,
         "reasoning_depth_distribution": dict(sorted(reasoning_counter.items())),
         "educational_level_distribution": dict(sorted(edu_counter.items())),
+        "source_breakdown": source_breakdown,
         "model_path": model_path,
         "device": device,
         "batch_size": batch_size,
