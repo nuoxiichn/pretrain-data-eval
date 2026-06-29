@@ -1,0 +1,110 @@
+# Stage 5 v3: 污染检测（cascade 准备版）
+#
+# v2 → v3 改动（2026-06-29 注册表对齐评测）：
+#   1. 所有 benchmark 改走本地 path（v2 HF loader 离线不可用）
+#   2. **benchmark 注册表与评测同事的实际评测清单严格对齐**
+#      Pretrain: MMLU-Pro / GPQA-Diamond / MATH / EvalPlus / LiveCodeBench / MGSM / MMMLU
+#      SFT:      IFEval / SimpleQA / LiveBench / MMLU-Pro / GPQA-Diamond / AIME 2025 / MATH-500 / LiveCodeBench
+#      去重后 12 个 jsonl（MATH 与 MATH-500 同时保留：评测都用，索引 L1 hash 自然去重重叠题）
+#   3. 移除：MMLU / HellaSwag / ARC / HumanEval / GSM8K / CMMLU / C-Eval / AGIEval-zh / CMB（不在评测清单）
+#   4. cascade 段（L2 / L3 路由阈值）保持不变
+#
+# 统一 JSONL 由 scripts/build_eval_aligned_benchmarks.py 生成。
+# text_field=question, code_field=code（仅 EvalPlus 用）.
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+  path_meta:
+    language:
+      ultrafineweb_en_l3: en
+      ultrafineweb_zh_l3: zh
+    source:
+      multi_style: ultrafineweb_multi_style
+      qa: ultrafineweb_qa
+
+benchmarks:
+  cache_dir: /mnt/public/data
+  index_dir: /mnt/public/data/contamination_index_v3
+  datasets:
+    # ── Pretrain 评测清单 ──
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/mmlu_pro.jsonl,      text_field: question, label: mmlu_pro}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/gpqa_diamond.jsonl,  text_field: question, label: gpqa_diamond}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/math.jsonl,          text_field: question, label: math}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/evalplus.jsonl,      text_field: question, code_field: code, label: evalplus}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/livecodebench.jsonl, text_field: question, label: livecodebench}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/mgsm.jsonl,          text_field: question, label: mgsm}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/mmmlu.jsonl,         text_field: question, label: mmmlu}
+
+    # ── SFT 评测清单（与 Pretrain 重叠的不重复列） ──
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/ifeval.jsonl,        text_field: question, label: ifeval}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/simpleqa.jsonl,      text_field: question, label: simpleqa}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/livebench.jsonl,     text_field: question, label: livebench}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/aime_2025.jsonl,     text_field: question, label: aime_2025}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/eval_aligned/math_500.jsonl,      text_field: question, label: math_500}
+
+# ── 各子命令参数 ──
+
+exact:
+  paragraph_sep: "\n\n"
+  min_para_chars: 50
+
+code_near:
+  ngram_size: 5
+  jaccard_threshold: 0.85
+  num_hashes: 128
+  num_bands: 16
+  band_size: 8
+
+code_ast:
+  languages:
+    - python
+  fingerprint_jaccard_threshold: 0.90
+
+# L2：通用文本 char-MinHash near-dup（不限 code field）
+near:
+  ngram_size: 5
+  jaccard_threshold: 0.85
+  num_hashes: 128
+  num_bands: 16
+  band_size: 8
+
+# L3：BGE-m3 + FAISS
+embed:
+  model_path: /mnt/public/model/bge-m3
+  cos_threshold: 0.85
+  top_k: 5
+  batch_size: 64
+  max_length: 512
+  device: cuda
+
+# Cascade：L1 → L2 → L3 路由阈值
+cascade:
+  layer2:
+    ngram_size: 5
+    num_hashes: 128
+    # LSH s-curve: r=4, b=32 → 50% match@jaccard≈0.5，0.3 处 ~14%（仍可能漏检）
+    # 与默认 r=8/b=16 (50%@0.83) 相比，更敏感于中低 jaccard
+    num_bands: 32
+    band_size: 4
+    window_size: 150
+    window_stride: 75
+    # 2026-06-29: 0.30 → 0.20，sanity 测试发现 L3_cos 重写型污染在 0.30 阈值下 100% 漏检
+    # （5 条 jaccard 实测: 0.000, 0.156, 0.273, 0.000, 0.273），降到 0.20 可救回 0.273×2 条
+    # 注：0.000 那两条任何 L2 阈值都救不回，仍属 known-gap（见 实施方案.md §3.5）
+    enter_l3_low: 0.20
+    enter_l3_high: 0.90
+  layer3:
+    model_path: /mnt/public/model/bge-m3
+    top_k: 5
+    batch_size: 64
+    max_length: 512
+    device: cuda
+    cos_red: 0.85
+    cos_yellow: 0.70
+
+output:
+  base_dir: outputs/stage5

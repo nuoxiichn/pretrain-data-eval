@@ -1,0 +1,57 @@
+# Stage 5 v3 smoke 配置：只包含本地中文 benchmark，跳过 HF（用于 mock smoke）
+# 主配置见 configs/stage5_v3.yaml
+
+input:
+  format: parquet
+  batch_size: 500
+  field_map:
+    uid: doc_id
+    content: text
+
+benchmarks:
+  cache_dir: /mnt/public/data
+  index_dir: /mnt/public/data/contamination_index_v3
+  datasets:
+    - {path: /mnt/public/data/contamination_v3_benchmarks/cmmlu.jsonl, text_field: question, label: cmmlu}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/ceval.jsonl, text_field: question, label: ceval}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/agieval_zh.jsonl, text_field: question, label: agieval_zh}
+    - {path: /mnt/public/data/contamination_v3_benchmarks/cmb.jsonl, text_field: question, label: cmb}
+
+exact:
+  paragraph_sep: "\n\n"
+  min_para_chars: 50
+
+near:
+  ngram_size: 5
+  jaccard_threshold: 0.85
+  num_hashes: 128
+  num_bands: 16
+  band_size: 8
+
+embed:
+  model_path: /mnt/public/model/bge-m3
+  cos_threshold: 0.85
+  top_k: 5
+  batch_size: 64
+  max_length: 512
+  device: cuda
+
+cascade:
+  layer2:
+    ngram_size: 5
+    num_hashes: 128
+    num_bands: 16
+    band_size: 8
+    enter_l3_low: 0.30
+    enter_l3_high: 0.90
+  layer3:
+    model_path: /mnt/public/model/bge-m3
+    top_k: 5
+    batch_size: 64
+    max_length: 512
+    device: cuda
+    cos_red: 0.85
+    cos_yellow: 0.70
+
+output:
+  base_dir: outputs/stage5
