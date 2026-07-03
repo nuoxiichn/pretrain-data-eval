@@ -25,8 +25,19 @@ dependencies = [
     # 毒性分类：detoxify unbiased 模型走本地 HF 目录（transformers 直接加载），
     # 不依赖 detoxify pip 包（其默认从 GitHub 拉 .ckpt）。仅需 transformers + torch。
     # 代码解析
-    "tree-sitter>=0.21",
+    "tree-sitter>=0.22",       # 需 >=0.22：新版 Language(ptr) 单参 API + Parser(lang) 构造，配 grammar 0.23+
     "tree-sitter-python>=0.21",
+    # 多语言 parsability grammar（S8）：每种语言一个包，装了才可解析，未装的在 auto 模式下记 unsupported
+    "tree-sitter-javascript>=0.21",
+    "tree-sitter-typescript>=0.21",
+    "tree-sitter-java>=0.21",
+    "tree-sitter-go>=0.21",
+    "tree-sitter-c>=0.21",
+    "tree-sitter-cpp>=0.21",
+    "tree-sitter-c-sharp>=0.21",
+    "tree-sitter-rust>=0.21",
+    "tree-sitter-ruby>=0.21",
+    "tree-sitter-php>=0.21",
     # 去重 & 污染（Dolma Rust 后端）
     "dolma>=1.0",
     # 污染检测 benchmark 加载

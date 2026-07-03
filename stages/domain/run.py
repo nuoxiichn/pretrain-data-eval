@@ -55,7 +55,8 @@ def cli():
 @click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES),
               show_default=True)
 @click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
-@click.option("--language", default=None, help="tree-sitter 语言（覆盖 yaml，默认 python）")
+@click.option("--language", default=None,
+              help="tree-sitter 语言（覆盖 yaml，默认 python）；auto=按每条文档 lang 字段自动选")
 def parsability(input_path, dataset, config_path, output_base, output_dir,
                 input_format, max_docs, sample_mode, seed, language):
     """代码可解析率 / 语法错误严重度（tree-sitter）"""
