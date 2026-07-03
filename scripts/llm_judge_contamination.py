@@ -10,7 +10,7 @@
 
 Design notes
 ------------
-- 复用 stage2 toxicity-v3 的 vLLM judge 骨架（`_JUDGE_SYSTEM_PROMPT` 结构）
+- 复用 stage2 toxicity 的 vLLM judge 骨架（`_JUDGE_SYSTEM_PROMPT` 结构）
 - 输入源：`outputs/stage5/ufw_*_l3_v3/cascade_sample500/*/per_doc.jsonl` 中 verdict=yellow 的 doc
 - 需要重新从原 parquet 加载 doc.text（per_doc.jsonl 只有 doc_id）
 - benchmark 内容从 `/mnt/public/data/contamination_v3_benchmarks/eval_aligned/*.jsonl` 拿
@@ -334,7 +334,7 @@ def _build_user_content(target: dict, bench_info: dict, max_doc_chars: int) -> s
 @click.option("--sample-mode", default="head", type=click.Choice(["head", "random"]),
               show_default=True)
 @click.option("--seed", default=42, type=int, show_default=True)
-@click.option("--config", "config_path", default="configs/stage5_v3.yaml", show_default=True)
+@click.option("--config", "config_path", default="configs/stage5.yaml", show_default=True)
 @click.option("--limit", default=0, type=int, help="调试用：只跑前 N 条 yellow")
 @click.option("--dry-run", is_flag=True, help="只打印待复审数量，不加载 LLM")
 def main(datasets, output, summary, model_path, max_doc_chars,

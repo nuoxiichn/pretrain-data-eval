@@ -1,5 +1,5 @@
-# Stage 5 v3 smoke 配置：只包含本地中文 benchmark，跳过 HF（用于 mock smoke）
-# 主配置见 configs/stage5_v3.yaml
+# Stage 5 smoke 配置：只包含本地中文 benchmark，跳过 HF（用于 mock smoke）
+# 主配置见 configs/stage5.yaml
 
 input:
   format: parquet

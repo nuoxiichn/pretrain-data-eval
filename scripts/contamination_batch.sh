@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
-# Stage 5 污染检测 全量逐文件扫描，支持断点续跑
-# 用法: bash scripts/contamination_batch.sh en|zh [config_yaml]
-#   默认使用 configs/stage5_mmlu.yaml（仅 MMLU）
+# Stage 5 — exact 污染检测跑批（11 评测对齐 benchmark，含中文 CMMLU/C-Eval/AGIEval-zh/CMB）
+# 输出到 $DATASET（数据集标签见下）
+#
+# 用法: bash scripts/contamination_batch.sh en|zh
 set -uo pipefail
 
-LANG=${1:?用法: contamination_batch.sh en|zh [config_yaml]}
-CONFIG=${2:-configs/stage5_mmlu.yaml}
+LANG=${1:?用法: contamination_batch.sh en|zh}
 
 CODE=/mnt/public/code/chennuoxi/pretrain-data-eval
 cd "$CODE"
 
+CONFIG=configs/stage5.yaml
+
 case "$LANG" in
   en)
     DATA=/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_en_l3
-    DATASET=ufw_en_l3 ;;
+    DATASET=ufw_en_l3_v3 ;;
   zh)
     DATA=/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_zh_l3
-    DATASET=ufw_zh_l3 ;;
+    DATASET=ufw_zh_l3_v3 ;;
   *)
     echo "未知语言: $LANG"; exit 1 ;;
 esac

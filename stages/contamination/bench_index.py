@@ -4,8 +4,8 @@ Cascade 批量跑时每个文件都会 reload benchmark + reencode embedding，6
 全量 596 文件 = 10h 浪费在重编。本模块负责离线一次构建，cascade 启动时 mmap 加载.
 
 CLI:
-  PYTHONPATH=. python stages/contamination/bench_index.py build --config configs/stage5_v3.yaml
-  PYTHONPATH=. python stages/contamination/bench_index.py info  --config configs/stage5_v3.yaml
+  PYTHONPATH=. python stages/contamination/bench_index.py build --config configs/stage5.yaml
+  PYTHONPATH=. python stages/contamination/bench_index.py info  --config configs/stage5.yaml
 
 落盘结构（index_dir 由 yaml benchmarks.index_dir 控制）:
   hash_index.pkl        — {doc_md5: [labels], para_md5: [labels]}
@@ -231,14 +231,14 @@ def cli():
 
 
 @cli.command()
-@click.option("--config", "config_path", default="configs/stage5_v3.yaml", show_default=True)
+@click.option("--config", "config_path", default="configs/stage5.yaml", show_default=True)
 def build(config_path):
     """一次性构建 hash + MinHash + BGE-m3 embedding 索引并落盘"""
     build_index(config_path)
 
 
 @cli.command()
-@click.option("--config", "config_path", default="configs/stage5_v3.yaml", show_default=True)
+@click.option("--config", "config_path", default="configs/stage5.yaml", show_default=True)
 def info(config_path):
     """查看已构建索引的元信息"""
     cfg = yaml.safe_load(open(config_path, encoding="utf-8"))

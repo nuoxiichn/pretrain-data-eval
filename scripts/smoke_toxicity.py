@@ -1,11 +1,11 @@
-"""Smoke test for compute_toxicity_v3.
+"""Smoke test for compute_toxicity.
 
 Runs the full chunk + recall + judge pipeline on a tiny in-memory doc set.
 Recall uses the real XLM-R model (so we exercise the binary classifier path),
 but the Qwen judge is stubbed out — no GPU LLM work, no 14 GB of weights to load.
 
 Run:
-  PYTHONPATH=. python scripts/smoke_toxicity_v3.py
+  PYTHONPATH=. python scripts/smoke_toxicity.py
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from stages.safety.utils import compute_toxicity_v3
+from stages.safety.utils import compute_toxicity
 
 
 DOCS = [
@@ -63,7 +63,7 @@ def stub_judge_factory(model_path, *, max_tokens, temperature, gpu_memory_utiliz
 
 
 def main() -> int:
-    per_doc, summary = compute_toxicity_v3(
+    per_doc, summary = compute_toxicity(
         DOCS,
         recall_model_path="/mnt/public/data/models/xlmr-large-toxicity-classifier",
         judge_model_path="<stub>",

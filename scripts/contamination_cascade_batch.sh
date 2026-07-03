@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Stage 5 v3 — cascade 跑批（L1 exact + L2 MinHash + L3 BGE-m3 embedding）
-# 必须先跑过：python stages/contamination/bench_index.py build --config configs/stage5_v3.yaml
+# Stage 5 — cascade 跑批（L1 exact + L2 MinHash + L3 BGE-m3 embedding）
+# 必须先跑过：python stages/contamination/bench_index.py build --config configs/stage5.yaml
 #
 # **不全量**：每文件随机抽样 N docs，跨全部文件汇总污染率
 # （全量 cascade 单文件 ~15min × 596 文件 = 150h 不切实际；采样 500/file × 596 ≈ 5-7h）
 #
 # 用法:
-#   bash scripts/contamination_v3_cascade_batch.sh en|zh [docs_per_file] [max_files]
+#   bash scripts/contamination_cascade_batch.sh en|zh [docs_per_file] [max_files]
 #     docs_per_file: 默认 500（每文件抽样 N docs）
 #     max_files:     默认 0（全量文件）
 set -uo pipefail
 
-LANG=${1:?用法: contamination_v3_cascade_batch.sh en|zh [docs_per_file] [max_files]}
+LANG=${1:?用法: contamination_cascade_batch.sh en|zh [docs_per_file] [max_files]}
 DOCS_PER_FILE=${2:-500}
 MAX_FILES=${3:-0}
 
 CODE=/mnt/public/code/chennuoxi/pretrain-data-eval
 cd "$CODE"
 
-CONFIG=configs/stage5_v3.yaml
+CONFIG=configs/stage5.yaml
 
 case "$LANG" in
   en)

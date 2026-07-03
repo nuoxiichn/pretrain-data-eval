@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Stage 5 v3 后台批量任务状态总览
-# 用法: bash scripts/contamination_v3_status.sh
+# Stage 5 后台批量任务状态总览
+# 用法: bash scripts/contamination_status.sh
 
 CODE=/mnt/public/code/chennuoxi/pretrain-data-eval
 
-echo "=== Contamination v3 后台任务状态 ($(date +%H:%M:%S)) ==="
+echo "=== Contamination 后台任务状态 ($(date +%H:%M:%S)) ==="
 echo
 
 # 后台进程
 echo "[进程]"
-ps aux 2>/dev/null | grep -E "contamination_v3_batch|contamination_v3_cascade_batch|run\.py exact|run\.py cascade" | grep -v grep | awk '{printf "  %s %s %s %s %s\n", $1, $2, $9, $10, $11}' | head -8
+ps aux 2>/dev/null | grep -E "contamination_batch|contamination_cascade_batch|run\.py exact|run\.py cascade" | grep -v grep | awk '{printf "  %s %s %s %s %s\n", $1, $2, $9, $10, $11}' | head -8
 echo
 
 # 各 batch 进度

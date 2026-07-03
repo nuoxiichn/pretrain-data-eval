@@ -10,8 +10,7 @@
 |--------|--------|------|------|
 | `pii` | 行 1（通用文本）+ 行 2（代码语料） | Microsoft Presidio | 60+ 实体类型；通过 `--mode` 切换通用/代码模式 |
 | `secrets` | 行 3 | Gitleaks（二进制） | 高置信度 Secret 扫描，`--no-git` 模式逐文档扫描 |
-| `toxicity` | 行 4 (v2) | HF 文本分类模型 | 整篇打分；自动识别多标签 / 二分类 |
-| `toxicity-v3` | 行 4 (v3) | XLM-R 召回 + Qwen2.5-7B-Instruct LLM-judge | chunk 切分（≤512 token）+ 召回 + 三类（benign/discuss/promote）复审；解决 v2 长文档「文学引用 / 历史叙述」误报 |
+| `toxicity` | 行 4 | XLM-R 召回 + Qwen2.5-7B-Instruct LLM-judge | chunk 切分（≤512 token）+ 召回 + 三类（benign/discuss/promote）复审；针对长文档「文学引用 / 历史叙述」误报设计 |
 
 > **BigCode PII scripts（行 2）**：原始实现需 git clone bigcode-dataset 仓库。
 > 本阶段用 Presidio + 代码专用实体列表（`EMAIL_ADDRESS`, `IP_ADDRESS`, `URL`, `CRYPTO`, `CREDIT_CARD`）近似替代，已覆盖主要模式。
@@ -57,35 +56,10 @@
 }
 ```
 
-### toxicity
+### toxicity（召回 + LLM-judge 复审）
 
-**多标签模型**（detoxify unbiased，英文）：
-```json
-{
-  "scores": {"toxicity": 0.03, "severe_toxicity": 0.01, "obscene": 0.02, "identity_attack": 0.01, "insult": 0.02, "threat": 0.01, "sexual_explicit": 0.01},
-  "flags": {"high_risk": false}
-}
-```
-
-**二分类模型**（xlmr-large-toxicity-classifier，中英多语言）：
-```json
-{
-  "scores": {"toxicity": 0.85},
-  "flags": {"high_risk": true}
-}
-```
-
-> 模型类型（`model_mode: "binary"` / `"multilabel"`）自动识别，无需手动切换。
-> 切换模型只需改 `configs/stage2.yaml` 中的 `toxicity.model_path`。
->
-> **推荐**：中英语料统一用 `textdetox/xlmr-large-toxicity-classifier`（XLM-RoBERTa-Large，
-> PAN/CLEF 2024 共享任务官方分类器，覆盖 9+ 语言）。纯英文语料如需细粒度维度可用
-> detoxify unbiased。
-
-### toxicity-v3（v3：召回 + LLM-judge 复审）
-
-**动机**：v2 报告抽查显示 XLM-R 在 UFW-L3（教育/百科长文档）上把「文学引用、历史叙述、新闻
-报道」误判为 promote，假阳性 ≈ 100%。v3 引入二阶段流水线：
+**动机**：XLM-R 整篇打分在 UFW-L3（教育/百科长文档）上把「文学引用、历史叙述、新闻
+报道」误判为 promote，假阳性 ≈ 100%。改用二阶段流水线：
 
 1. **chunk** — 用 XLM-R tokenizer 把每文档切成 ≤512 子词的 chunk（含 overlap），避免长文档
    被全文一次性强行截断。
@@ -111,12 +85,8 @@
 }
 ```
 
-配置见 `configs/stage2.yaml -> toxicity_v3:`。Judge 走本地 vLLM，需 GPU；与召回模型共卡时
+配置见 `configs/stage2.yaml -> toxicity:`。Judge 走本地 vLLM，需 GPU；与召回模型共卡时
 调低 `judge_gpu_mem_util`。
-
-**v2 高位文档复审**：`scripts/recheck_v2_high_risk.py` 自动从 `outputs/stage2/ufw_{en,zh}_l3/toxicity_v2/`
-取 high_risk doc_id，回查 parquet 原文，跑 toxicity-v3 复审，落
-`outputs/stage2/ufw_{en,zh}_l3/toxicity_v3_recheck/`，并产 `comparison.md` 对照表。
 
 ## 依赖
 
@@ -124,14 +94,14 @@
 presidio-analyzer>=2.2
 presidio-anonymizer>=2.2
 spacy>=3.7
-transformers>=4.40    # toxicity：加载本地 HF 分类模型（detoxify / xlmr / COLD 等）
-vllm>=0.6             # toxicity-v3：LLM-judge 推理（Qwen2.5-7B-Instruct）
+transformers>=4.40    # toxicity 召回：加载本地 XLM-R 二分类模型
+vllm>=0.6             # toxicity LLM-judge 推理（Qwen2.5-7B-Instruct）
 ```
 
-毒性模型走本地 HF 目录（见 `configs/stage2.yaml` 的 `toxicity.model_path`），
-用 transformers 直接加载。支持任意 `*ForSequenceClassification` 模型：
-- **多标签**（如 detoxify unbiased）→ sigmoid，输出多维度分数
-- **二分类**（如 xlmr-large-toxicity-classifier、roberta-base-cold）→ softmax，输出单维 toxicity
+毒性检测分两阶段：XLM-R 召回模型 + Qwen LLM-judge（均走本地目录，见
+`configs/stage2.yaml` 的 `toxicity.recall_model_path` / `toxicity.judge_model_path`），
+用 transformers + vLLM 加载。召回模型推荐 `textdetox/xlmr-large-toxicity-classifier`
+（XLM-RoBERTa-Large，PAN/CLEF 2024 官方分类器，覆盖 9+ 语言）。
 
 Presidio 需要 spaCy 语言模型（首次运行自动下载）：
 ```bash
@@ -161,7 +131,7 @@ PYTHONPATH=. python stages/safety/run.py pii \
 PYTHONPATH=. python stages/safety/run.py secrets \
   --input data/mock.jsonl --dataset mock --input-format jsonl
 
-# 毒性检测（必须带 --config，从中读 toxicity.model_path）
+# 毒性检测（需 GPU；从 --config 读 toxicity.recall_model_path / judge_model_path）
 PYTHONPATH=. python stages/safety/run.py toxicity \
   --input data/mock.jsonl --dataset mock --input-format jsonl \
   --config configs/stage2.yaml

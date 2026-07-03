@@ -396,44 +396,6 @@ def chart_runtime_projection(charts_dir: Path):
     _save(fig, "runtime_projection", charts_dir)
 
 
-def chart_toxicity(charts_dir: Path):
-    en = _load(OUT_DIR / "stage2/ufw_en_l3/toxicity_v2/summary.json")
-    zh = _load(OUT_DIR / "stage2/ufw_zh_l3/toxicity_v2/summary.json")
-    if not en or not zh:
-        return
-    en_stats = en.get("dim_stats", {}).get("toxicity", {})
-    zh_stats = zh.get("dim_stats", {}).get("toxicity", {})
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    metrics = ["mean", "p50", "p95", "p99", "max"]
-    metric_labels = ["Mean", "P50", "P95", "P99", "Max"]
-
-    for ax, stats, lang, color, n_docs, n_high in [
-        (axes[0], en_stats, "EN", "#4C72B0",
-         en.get("total_docs_scanned", 0), en.get("high_risk_docs", 0)),
-        (axes[1], zh_stats, "ZH", "#DD8452",
-         zh.get("total_docs_scanned", 0), zh.get("high_risk_docs", 0)),
-    ]:
-        vals = [stats.get(m, 0) for m in metrics]
-        x = np.arange(len(metrics))
-        bars = ax.bar(x, vals, color=color, alpha=0.8, width=0.6)
-        ax.set_xticks(x)
-        ax.set_xticklabels(metric_labels, fontsize=9)
-        ax.set_ylabel("Toxicity Score")
-        ax.set_title(f"Toxicity Distribution ({lang}, n={n_docs})\n"
-                     f"High risk: {n_high} ({n_high/n_docs*100:.2f}%)", fontsize=10)
-        ax.axhline(y=0.5, color="red", linestyle="--", linewidth=1, alpha=0.7, label="threshold=0.5")
-        ax.legend(fontsize=8)
-        for bar, v in zip(bars, vals):
-            if v > 0.001:
-                ax.text(bar.get_x() + bar.get_width() / 2, v + max(vals) * 0.03,
-                        f"{v:.4f}", ha="center", fontsize=7, va="bottom")
-
-    fig.subplots_adjust(wspace=0.3)
-    _save(fig, "stage2_toxicity", charts_dir)
-
-
 def main():
     charts_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "outputs/report/charts"
     charts_dir.mkdir(parents=True, exist_ok=True)
@@ -449,7 +411,6 @@ def main():
     chart_binoculars(charts_dir)
     chart_stage6_experiments(charts_dir)
     chart_runtime_projection(charts_dir)
-    chart_toxicity(charts_dir)
 
     print(f"\nDone — {len(list(charts_dir.glob('*.png')))} charts generated.")
 

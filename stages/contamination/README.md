@@ -35,7 +35,7 @@ doc → L1 exact (MD5 hash)
 
 ## Benchmark 配置
 
-`configs/stage5.yaml`（v2，仅 MMLU 等 EN benchmark）和 `configs/stage5_v3.yaml`（v3，加 CMMLU / C-Eval / AGIEval-zh / CMB 等 ZH benchmark）。
+`configs/stage5.yaml`：11 个评测对齐 benchmark（EN 7 + ZH 4：CMMLU / C-Eval / AGIEval-zh / CMB），全部走 `/mnt/public/data/contamination_v3_benchmarks/eval_aligned/` 本地路径。
 
 新 benchmark 接入两种方式：
 - 本地文件：`{path: /path/to/file.jsonl, text_field: question, label: my_bench}`
@@ -54,12 +54,12 @@ doc → L1 exact (MD5 hash)
 
 ```bash
 # 一次性构建 cascade 索引（hash + MinHash + BGE-m3 embedding）
-PYTHONPATH=. python stages/contamination/bench_index.py build --config configs/stage5_v3.yaml
+PYTHONPATH=. python stages/contamination/bench_index.py build --config configs/stage5.yaml
 
 # Cascade 三层（推荐）
 PYTHONPATH=. python stages/contamination/run.py cascade \
   --input /mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_zh_l3/multi_style/part-00000-*.parquet \
-  --dataset ufw_zh_l3 --config configs/stage5_v3.yaml --max-docs 1000
+  --dataset ufw_zh_l3 --config configs/stage5.yaml --max-docs 1000
 
 # 仅 L2 单独跑
 PYTHONPATH=. python stages/contamination/run.py near \
@@ -70,10 +70,10 @@ PYTHONPATH=. python stages/contamination/run.py embed \
   --input data/mock.jsonl --dataset mock --input-format jsonl --max-docs 50
 
 # 全量 batch（每文件抽 500 docs head-sample）
-bash scripts/contamination_v3_cascade_batch.sh zh 500
+bash scripts/contamination_cascade_batch.sh zh 500
 
 # 状态检查
-bash scripts/contamination_v3_status.sh
+bash scripts/contamination_status.sh
 
 # 聚合
 python scripts/aggregate_batch.py outputs/stage5/ufw_zh_l3_v3/cascade_sample500

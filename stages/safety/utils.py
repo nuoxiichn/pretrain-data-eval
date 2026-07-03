@@ -2,8 +2,7 @@
 
   compute_pii         — row 1+2: Presidio PII detection (general & code modes)
   compute_secrets     — row 3:   Gitleaks secret scanning
-  compute_toxicity    — row 4:   single-pass HF toxicity classifier (v2)
-  compute_toxicity_v3 — row 4 v3: chunk + XLM-R recall + Qwen LLM-judge
+  compute_toxicity    — row 4:   chunk + XLM-R recall + Qwen LLM-judge
 """
 
 from __future__ import annotations
@@ -291,80 +290,7 @@ def compute_secrets(
     return per_doc, summary
 
 
-# ── Row 4: Toxicity classification ────────────────────────────────────────────
-
-_TOXICITY_DIMS = [
-    "toxicity", "severe_toxicity", "obscene",
-    "identity_attack", "insult", "threat", "sexual_explicit",
-]
-
-
-def compute_toxicity(
-    docs: Iterable[Document],
-    model_path: str,
-    high_risk_threshold: float = 0.5,
-    batch_size: int = 16,
-    device: str | None = None,
-    max_length: int = 512,
-    on_doc: Callable[[DocResult], None] | None = None,
-) -> tuple[list[DocResult], dict]:
-    """Classify toxicity — auto-detects binary (xlmr/COLD) vs multi-label (detoxify).
-    """
-    if not model_path:
-        raise RuntimeError(
-            "toxicity 需要本地 HF 模型目录：在 configs/stage2.yaml 设置 "
-            "toxicity.model_path（如 /mnt/public/model/detoxify/unbiased-toxic-roberta）"
-        )
-    doc_list = list(docs)
-    predict, model_mode = _make_hf_predictor(model_path, device=device, max_length=max_length)
-
-    per_doc: list[DocResult] = []
-    dim_scores: dict[str, list[float]] = {d: [] for d in _TOXICITY_DIMS}
-    high_risk_count = 0
-
-    for i in range(0, len(doc_list), batch_size):
-        batch = doc_list[i : i + batch_size]
-        texts = [str(doc.get("text") or "") for doc in batch]
-        preds = predict(texts)
-
-        for j, doc in enumerate(batch):
-            scores = {
-                dim: round(float(preds[dim][j]), 6)
-                for dim in _TOXICITY_DIMS
-                if dim in preds
-            }
-            is_high_risk = scores.get("toxicity", 0.0) >= high_risk_threshold
-            if is_high_risk:
-                high_risk_count += 1
-            for dim, val in scores.items():
-                dim_scores[dim].append(val)
-
-            result = DocResult(
-                doc_id=str(doc["doc_id"]),
-                scores=scores,
-                flags={"high_risk": is_high_risk},
-            )
-            if on_doc is not None:
-                on_doc(result)
-            else:
-                per_doc.append(result)
-
-    total = len(doc_list)
-    summary = {
-        "total_docs_scanned": total,
-        "high_risk_docs": high_risk_count,
-        "high_risk_pct": round(high_risk_count / total, 4) if total else 0.0,
-        "high_risk_threshold": high_risk_threshold,
-        "model_path": model_path,
-        "model_mode": model_mode,
-        "dim_stats": {
-            dim: _dim_summary(vals)
-            for dim, vals in dim_scores.items()
-            if vals
-        },
-    }
-    return per_doc, summary
-
+# ── Toxicity: shared HF predictor helpers ────────────────────────────────────
 
 _TOXIC_LABEL_KEYWORDS = {"toxic", "offensive", "risk", "harmful", "hate"}
 
@@ -424,7 +350,7 @@ def _dim_summary(values: list[float]) -> dict:
     }
 
 
-# ── Row 4 v3: chunk + XLM-R recall + Qwen LLM-judge ──────────────────────────
+# ── Row 4: chunk + XLM-R recall + Qwen LLM-judge ─────────────────────────────
 
 _JUDGE_VERDICTS = ("benign", "discuss", "promote")
 
@@ -599,7 +525,7 @@ def _make_qwen_judge(
     return judge
 
 
-def compute_toxicity_v3(
+def compute_toxicity(
     docs: Iterable[Document],
     recall_model_path: str,
     judge_model_path: str,
@@ -636,7 +562,7 @@ def compute_toxicity_v3(
     )
     if recall_mode != "binary":
         raise RuntimeError(
-            f"toxicity_v3 requires a binary recall model, got {recall_mode}"
+            f"toxicity requires a binary recall model, got {recall_mode}"
         )
     recall_tok = AutoTokenizer.from_pretrained(recall_model_path)
 
