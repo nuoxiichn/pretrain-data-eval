@@ -17,8 +17,8 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from src.reader import Document
-from src.schema import DocResult
+from pretrain_data_eval.reader import Document
+from pretrain_data_eval.schema import DocResult
 from stages.contamination.benchmarks import BenchItem
 from stages.dedup.utils import _mh_permutations, _minhash_signature_fast
 

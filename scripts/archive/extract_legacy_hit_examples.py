@@ -5,7 +5,7 @@
 该 md 含命中原文片段，不进 git（见 .gitignore）。
 
 用法:
-  PYTHONPATH=. python scripts/extract_hit_examples.py
+  PYTHONPATH=. python scripts/archive/extract_legacy_hit_examples.py
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 OUT_STAGE2 = ROOT / "outputs" / "stage2"
 DATA_ROOT = Path("/mnt/public/data/Ultra-FineWeb-L3/data")
 REPORT = ROOT / "stages" / "safety" / "hit_examples.md"

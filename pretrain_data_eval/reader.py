@@ -31,13 +31,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator, TypedDict
 
-Document = dict[str, object]
+class Document(TypedDict):
+    """Normalized document passed to every stage."""
 
-_DEFAULTS: Document = {
-    "doc_id": "",
-    "text": "",
+    doc_id: str
+    text: str
+    source: str | None
+    url: str | None
+    timestamp: str | None
+    language: str | None
+    meta: dict[str, Any]
+
+_DEFAULTS: dict[str, object] = {
+    "doc_id": None,
+    "text": None,
     "source": None,
     "url": None,
     "timestamp": None,
@@ -56,8 +65,30 @@ def _apply_field_map(raw: dict, field_map: dict[str, str]) -> dict:
 
 
 def _normalize(raw: dict, meta_overrides: dict | None = None) -> Document:
-    """Map raw dict to standard Document, applying overrides for None fields."""
-    doc: Document = {k: raw.get(k, v) for k, v in _DEFAULTS.items()}
+    """Map a raw object to a validated standard Document."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"document must be a JSON object, got {type(raw).__name__}")
+
+    values = {k: raw.get(k, v) for k, v in _DEFAULTS.items()}
+    raw_doc_id = values["doc_id"]
+    if raw_doc_id is None or not str(raw_doc_id).strip():
+        raise ValueError("document is missing a non-empty doc_id")
+    values["doc_id"] = str(raw_doc_id)
+
+    if not isinstance(values["text"], str):
+        raise ValueError("document text must be a string")
+
+    meta_value = values.get("meta")
+    if meta_value is None:
+        values["meta"] = {}
+    elif not isinstance(meta_value, dict):
+        raise ValueError("document meta must be an object or null")
+
+    for field in ("source", "url", "timestamp", "language"):
+        if values[field] is not None and not isinstance(values[field], str):
+            raise ValueError(f"document {field} must be a string or null")
+
+    doc = Document(**values)  # type: ignore[arg-type]
     # Collect unmapped fields into meta
     known = set(_DEFAULTS)
     extra = {k: v for k, v in raw.items() if k not in known}
@@ -101,8 +132,8 @@ def _read_jsonl(path: Path, field_map: dict, meta_overrides: dict) -> Iterator[D
             try:
                 raw = _apply_field_map(json.loads(line), field_map)
                 yield _normalize(raw, meta_overrides)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"{path}:{lineno}: invalid JSON — {exc}") from exc
+            except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                raise ValueError(f"{path}:{lineno}: invalid document: {exc}") from exc
 
 
 # ── Parquet ───────────────────────────────────────────────────────────────────
@@ -120,12 +151,21 @@ def _read_parquet_file(
         raise RuntimeError("pyarrow not installed. Run: pip install pyarrow") from exc
 
     pf = pq.ParquetFile(path)
+    row_number = 0
     for batch in pf.iter_batches(batch_size=batch_size):
         columns = batch.to_pydict()
+        if not columns:
+            continue
         n = len(next(iter(columns.values())))
         for i in range(n):
             raw = _apply_field_map({k: v[i] for k, v in columns.items()}, field_map)
-            yield _normalize(raw, meta_overrides)
+            try:
+                yield _normalize(raw, meta_overrides)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"{path}:row {row_number + i}: invalid document: {exc}"
+                ) from exc
+        row_number += n
 
 
 # ── Directory ─────────────────────────────────────────────────────────────────
@@ -163,6 +203,9 @@ def read_documents(
     field_map = cfg.get("field_map", {})
     path_meta = cfg.get("path_meta", {})
     batch_size = cfg.get("batch_size", 500)
+
+    if not path.exists():
+        raise FileNotFoundError(path)
 
     if path.is_dir():
         yield from _read_directory(path, cfg)

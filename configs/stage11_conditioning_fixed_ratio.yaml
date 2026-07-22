@@ -1,0 +1,80 @@
+# Stage 11 fixed-token/parameter calibration on DataDecide token streams.
+# Use --primary-model datadecide_{4m,20m,60m} and --tokens-per-parameter 5.
+
+input:
+  format: uint16_stream
+  eod_token: <|endoftext|>
+  validation_reserve_tokens: 4000000
+
+sampling:
+  max_docs_per_corpus: 512
+  mode: head
+  seed: 42
+  validation_fraction: 0.02
+  split_seed: 42
+
+tokenizer:
+  vocab_size: 50280
+  min_frequency: 2
+  max_chars_per_corpus: 1
+  eod_token: <|endoftext|>
+
+model:
+  context_length: 256
+  primary:
+    d_model: 64
+    n_layers: 8
+    n_heads: 8
+    ffn_multiplier: 8
+  datadecide_4m:
+    d_model: 64
+    n_layers: 8
+    n_heads: 8
+    ffn_multiplier: 8
+  datadecide_20m:
+    d_model: 192
+    n_layers: 16
+    n_heads: 8
+    ffn_multiplier: 8
+  datadecide_60m:
+    d_model: 384
+    n_layers: 16
+    n_heads: 12
+    ffn_multiplier: 8
+  scale_small:
+    d_model: 64
+    n_layers: 4
+    n_heads: 8
+    ffn_multiplier: 4
+
+training:
+  # These are checkpoint fractions. --tokens-per-parameter replaces the final step.
+  steps: 1000
+  checkpoints: [100, 250, 500, 750, 1000]
+  batch_size: 64
+  learning_rate: 0.0006
+  min_learning_rate_ratio: 0.1
+  warmup_steps: 50
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  max_train_tokens_per_corpus: 500000000
+  seeds: [17]
+
+evaluation:
+  max_tokens_per_doc: 512
+  batch_size: 32
+  bootstrap_samples: 2000
+  confidence: 0.95
+  conditioning_min_effect_bits: 0.01
+  scaling_min_effect_bits: 0.01
+  stable_horizon_fraction: 0.8
+
+runtime:
+  device: auto
+  precision: bf16
+  torch_num_threads: 4
+
+output:
+  base_dir: outputs/stage11_conditioning_fixed_ratio

@@ -6,14 +6,14 @@
 
 ## 子命令
 
-| 子命令 | 对应行 | 工具 | 说明 |
-|--------|--------|------|------|
-| `pii` | 行 1（通用文本）+ 行 2（代码语料） | Microsoft Presidio | 60+ 实体类型；通过 `--mode` 切换通用/代码模式 |
-| `secrets` | 行 3 | Gitleaks（二进制） | 高置信度 Secret 扫描，`--no-git` 模式逐文档扫描 |
-| `toxicity` | 行 4 | XLM-R 召回 + Qwen2.5-7B-Instruct LLM-judge | chunk 切分（≤512 token）+ 召回 + 三类（benign/discuss/promote）复审；针对长文档「文学引用 / 历史叙述」误报设计 |
+| 子命令 | 工具 | 说明 |
+|--------|------|------|
+| `pii` | Microsoft Presidio | 通用/代码模式，通过 `--mode` 切换 recognizer 集合 |
+| `secrets` | Gitleaks（二进制） | `--no-git` 模式逐文档扫描 secret 候选 |
+| `toxicity` | XLM-R 召回 + Qwen2.5-7B-Instruct Judge | chunk 召回后做 benign/discuss/promote 复审 |
 
-> **BigCode PII scripts（行 2）**：原始实现需 git clone bigcode-dataset 仓库。
-> 本阶段用 Presidio + 代码专用实体列表（`EMAIL_ADDRESS`, `IP_ADDRESS`, `URL`, `CRYPTO`, `CREDIT_CARD`）近似替代，已覆盖主要模式。
+代码模式使用 Presidio + 代码专用实体列表（`EMAIL_ADDRESS`, `IP_ADDRESS`, `URL`,
+`CRYPTO`, `CREDIT_CARD`）。它是候选召回规则，不等价于 BigCode 工具的复现结果。
 
 ### PII 降误报（基于 UFW-L3 抽样）
 
@@ -31,14 +31,16 @@
 
 ## 输入
 
-标准 JSONL / Parquet（通过 `src/reader.py`），配置见 `configs/stage2.yaml`。
+标准 JSONL / Parquet（通过 `pretrain_data_eval/reader.py`），配置见 `configs/stage2.yaml`。
 
 ## 输出格式
 
 `per_doc.jsonl` — 每条一行：
 ```json
-{"doc_id": "...", "scores": {...}, "flags": {...}}
+{"schema_version": "1.0.0", "artifact_type": "per_doc", "doc_id": "...", "scores": {...}, "flags": {...}}
 ```
+
+下列示例只展开各子命令的业务 `scores` / `flags`。
 
 ### pii
 ```json
@@ -90,12 +92,9 @@
 
 ## 依赖
 
-```
-presidio-analyzer>=2.2
-presidio-anonymizer>=2.2
-spacy>=3.7
-transformers>=4.40    # toxicity 召回：加载本地 XLM-R 二分类模型
-vllm>=0.6             # toxicity LLM-judge 推理（Qwen2.5-7B-Instruct）
+```bash
+python -m pip install -e '.[safety]'       # PII
+python -m pip install -e '.[gpu,judge]'    # toxicity 召回 + Qwen Judge
 ```
 
 毒性检测分两阶段：XLM-R 召回模型 + Qwen LLM-judge（均走本地目录，见

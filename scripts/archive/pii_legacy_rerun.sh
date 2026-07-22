@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PII 采样重跑（去假阳性版）：从多个文件各采样 --max-docs，2h 内跑完
-# 用法: bash scripts/pii_rerun.sh
+# 用法: bash scripts/archive/pii_legacy_rerun.sh
 set -uo pipefail
 
 CODE=/mnt/public/code/chennuoxi/pretrain-data-eval

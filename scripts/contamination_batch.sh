@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 5 — exact 污染检测跑批（11 评测对齐 benchmark，含中文 CMMLU/C-Eval/AGIEval-zh/CMB）
+# Stage 5 — exact 污染检测跑批（12 个与实际评测清单对齐的 benchmark）
 # 输出到 $DATASET（数据集标签见下）
 #
 # 用法: bash scripts/contamination_batch.sh en|zh
@@ -15,10 +15,10 @@ CONFIG=configs/stage5.yaml
 case "$LANG" in
   en)
     DATA=/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_en_l3
-    DATASET=ufw_en_l3_v3 ;;
+    DATASET=ufw_en_l3 ;;
   zh)
     DATA=/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_zh_l3
-    DATASET=ufw_zh_l3_v3 ;;
+    DATASET=ufw_zh_l3 ;;
   *)
     echo "未知语言: $LANG"; exit 1 ;;
 esac

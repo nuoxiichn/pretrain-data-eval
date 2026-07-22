@@ -13,15 +13,15 @@
 | `code-near` | 代码近重复（字符 5-gram MinHash，仅对 benchmark 的 code_field） | `--jaccard-threshold` |
 | `code-ast` | 代码 AST 结构污染（tree-sitter 指纹） | yaml `code_ast` |
 
-## Cascade 三层架构（v3）
+## Cascade 三层架构
 
 ```
 doc → L1 exact (MD5 hash)
         ├─ hit                          → red
         └─ miss → L2 MinHash near-dup (char 5-gram + LSH, sliding window)
                     ├─ jaccard ≥ 0.90   → red
-                    ├─ jaccard < 0.30   → green
-                    └─ ∈ [0.30, 0.90)  → L3 BGE-m3 embedding (FAISS top-k)
+                    ├─ jaccard < 0.20   → green
+                    └─ ∈ [0.20, 0.90)  → L3 BGE-m3 embedding (FAISS top-k)
                                             ├─ cos ≥ 0.85    → red
                                             ├─ cos ∈ [0.70, 0.85) → yellow
                                             └─ cos < 0.70    → green
@@ -29,13 +29,15 @@ doc → L1 exact (MD5 hash)
 
 ### 关键设计点
 - **L2 sliding window**：UFW doc 平均 745 chars，benchmark 仅 ~60 chars，整 doc-level Jaccard 必然 ≈ 0（分母被 doc n-gram 撑大）。默认 window=150 / stride=75（与 benchmark p90 长度匹配）。
-- **LSH s-curve 调参**：默认 32 bands × 4 size（vs 通用 16×8），让 [0.3, 0.5] 低 Jaccard 区间仍能进入 L3 复核。
+- **LSH s-curve**：默认 32 bands × 4 rows，使中低 Jaccard 候选仍有机会进入 L3 复核。
 - **预建索引**：`bench_index.py build` 一次性把 hash + MinHash 签名 + BGE-m3 embedding 落盘到 `index_dir`，cascade 子命令通过 `--index-dir` 或 yaml `benchmarks.index_dir` 加载，避免每文件重复编码（~1 min 节省）。
 - **三色 verdict**：`red` 高度疑似污染、`yellow` 需人工复核、`green` 正常。聚合层 `aggregate_batch.py merge_contamination_cascade` 输出红绿灯分布。
 
 ## Benchmark 配置
 
-`configs/stage5.yaml`：11 个评测对齐 benchmark（EN 7 + ZH 4：CMMLU / C-Eval / AGIEval-zh / CMB），全部走 `/mnt/public/data/contamination_v3_benchmarks/eval_aligned/` 本地路径。
+`configs/stage5.yaml` 注册 12 个与实际评测清单对齐的 benchmark。默认路径位于本项目验证
+环境的 `/mnt/public/data/contamination_v3_benchmarks/eval_aligned/`，迁移环境时必须改为本地
+可读路径并重新构建索引。
 
 新 benchmark 接入两种方式：
 - 本地文件：`{path: /path/to/file.jsonl, text_field: question, label: my_bench}`
@@ -45,7 +47,7 @@ doc → L1 exact (MD5 hash)
 
 ## 输入输出
 
-- 输入：Parquet/JSONL，通过 `src/reader.py` 标准化
+- 输入：Parquet/JSONL，通过 `pretrain_data_eval/reader.py` 标准化
 - 输出：`outputs/stage5/{dataset}_{timestamp}/{subcommand}/`
   - `per_doc.jsonl`
   - `summary.json` —— cascade 含 `verdict_distribution` / `cost_breakdown` / `cross_lingual_docs` / `per_benchmark_red_hits`
@@ -76,19 +78,17 @@ bash scripts/contamination_cascade_batch.sh zh 500
 bash scripts/contamination_status.sh
 
 # 聚合
-python scripts/aggregate_batch.py outputs/stage5/ufw_zh_l3_v3/cascade_sample500
+python scripts/aggregate_batch.py outputs/stage5/ufw_zh_l3/cascade_sample500
 ```
 
 ## 依赖
 
-- `datasets` — HuggingFace datasets 库（远程 benchmark 加载；离线场景用 path）
-- `tree-sitter` + `tree_sitter_python` — AST 解析（`code-ast` 子命令）
-- `xxhash` — L2 fast MinHash
-- `transformers` + `torch` — L3 BGE-m3 编码（GPU 推荐）
-- `faiss-cpu/gpu` — L3 检索
-- `pyarrow` — Parquet benchmark
+```bash
+python -m pip install -e .                 # exact、near、本地 JSONL/Parquet benchmark
+python -m pip install -e '.[benchmarks]'   # 远程 HuggingFace benchmark
+python -m pip install -e '.[code]'         # code-ast
+python -m pip install -e '.[gpu]'          # embed/cascade 的 BGE-M3 + FAISS
+```
 
-## 文档
-
-- `级联污染检测实施方案.md` — v3 P2 cascade 设计与实施方案
-- `预训练阶段污染检测调研及方案.md` — 方法论调研（n-gram / MIA / 行为探测等七类）
+方法边界见 [`docs/guide/metrics.md`](../../docs/guide/metrics.md)，已被替代的设计和调研记录
+位于 [`docs/archive/`](../../docs/archive/README.md)。

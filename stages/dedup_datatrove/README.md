@@ -7,7 +7,7 @@
 
 - 只跑 stages 1-3（signature / buckets / cluster），**跳过 stage 4 (filter)**——项目是只读审计，只出重复率与簇统计，不输出去重后的数据集。
 - 参数严格照 `stages/dedup/utils.py` 现值：`n_grams=5, num_buckets=8, hashes_per_bucket=8, jaccard≈0.8`。
-- 输出契约字段对齐 v3 报告 §2.4.3 的表头。
+- 最终输出遵循项目公共 schema，并附带 DataTrove 参数和簇统计。
 
 ## 环境准备（一次性）
 
@@ -17,7 +17,8 @@ conda activate pretrain-dedup
 pip install "datatrove[processing,io]>=0.3" pyarrow numpy tqdm click pyyaml spacy jieba
 ```
 
-env freeze 存于 `envs/datatrove.txt`。**不要**改 project 主 `pyproject.toml` 的 datatrove 声明——独立 env 是唯一入口。
+环境 freeze 存于 `envs/datatrove.txt`。主 `pyproject.toml` 不声明 DataTrove；本目录的独立
+环境是唯一支持入口。
 
 ## 运行
 
@@ -33,7 +34,7 @@ python stages/dedup_datatrove/run.py all \
     --output-root outputs/stage4/datatrove_minhash/smoke \
     --limit 500 --tasks 8
 
-# Sanity 100K EN（对齐 v3 §2.4.3 自实现 0%）
+# Sanity 100K EN（与自实现 MinHash 做方向性对照）
 python stages/dedup_datatrove/run.py all \
     --input /mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_en_l3/multi_style \
     --dataset ufw_en_l3 \
@@ -75,15 +76,17 @@ python stages/dedup_datatrove/run.py aggregate-cmd --input ... --dataset ... --o
 - `buckets/XXXXX_YY.dups` — 每记录 4×uint32 = `(file_id1, doc_id1, file_id2, doc_id2)`
 - `clusters/000000.clusters` + `.sizes` + `.remove` — 每 doc 一条 uint32
 
-**最终产物**（`<output-root>/final/`，对齐项目 `src/schema.py` 契约）：
+**最终产物**（`<output-root>/final/`，对齐项目 `pretrain_data_eval/schema.py` 契约）：
 - `per_doc.jsonl` — 每行：
   ```json
-  {"doc_id": "...", "scores": {"cluster_id": 42, "cluster_size": 3, "near_dup_count": 2},
+  {"schema_version": "1.0.0", "artifact_type": "per_doc", "doc_id": "...",
+   "scores": {"cluster_id": 42, "cluster_size": 3, "near_dup_count": 2},
    "flags": {"is_near_dup": true, "in_multi_cluster": true}}
   ```
 - `summary.json`：
   ```json
-  {"total_docs": ..., "near_dup_docs": ..., "near_dup_pct": ...,
+  {"schema_version": "1.0.0", "artifact_type": "summary",
+   "total_docs": ..., "near_dup_docs": ..., "near_dup_pct": ...,
    "near_dup_pairs": ..., "num_clusters_multi": ..., "largest_cluster_size": ...,
    "n_hashes": 64, "num_bands": 8, "band_size": 8, "jaccard_threshold": 0.8,
    "n_workers": ..., "wall_time_sec": ...}

@@ -1,6 +1,6 @@
-"""把评测注册表里的 11 个 benchmark 抽成统一 JSONL（污染检测 v3 真正对齐评测后用）.
+"""把当前评测注册表里的 12 个 benchmark 抽成统一 JSONL，供污染检测使用。
 
-评测注册表（2026-06-29 用户确认，11 个去重后）：
+当前评测注册表：
   Pretrain: MMLU-Pro / GPQA-Diamond / MATH / EvalPlus(HEval+MBPP+) / LiveCodeBench / MGSM / MMMLU
   SFT:      IFEval / SimpleQA / LiveBench / MMLU-Pro / GPQA-Diamond / AIME 2025 / MATH-500 / LiveCodeBench
 

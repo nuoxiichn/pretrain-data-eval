@@ -49,7 +49,6 @@ from stages.dedup_datatrove.utils import (
     UFW_ADAPTER_ID_KEY,
     UFW_ADAPTER_TEXT_KEY,
     aggregate,
-    now_ts,
     ufw_adapter,
 )
 
@@ -173,7 +172,7 @@ def cluster(output_root):
     paths["clusters"].mkdir(parents=True, exist_ok=True)
     paths["logs"].mkdir(parents=True, exist_ok=True)
 
-    click.echo(f"[cluster] tasks=1 (datatrove requires world_size==1)")
+    click.echo("[cluster] tasks=1 (datatrove requires world_size==1)")
     step = MinhashDedupCluster(
         input_folder=str(paths["buckets"]),
         output_folder=str(paths["clusters"]),

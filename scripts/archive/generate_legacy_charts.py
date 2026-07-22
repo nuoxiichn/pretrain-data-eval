@@ -2,7 +2,7 @@
 """从聚合 / 采样 summary.json 生成报告图表。
 
 用法:
-  python scripts/generate_charts.py [--output-dir outputs/report/charts]
+  python scripts/archive/generate_legacy_charts.py [--output-dir outputs/report/charts]
 
 自动查找 outputs/ 下的 aggregated_summary.json 和最新时间戳的 summary.json。
 """
@@ -26,7 +26,7 @@ plt.rcParams.update({
     "savefig.pad_inches": 0.25,
 })
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = ROOT / "outputs"
 
 

@@ -23,10 +23,10 @@ CONFIG=configs/stage5.yaml
 case "$LANG" in
   en)
     DATA=/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_en_l3
-    DATASET=ufw_en_l3_v3 ;;
+    DATASET=ufw_en_l3 ;;
   zh)
     DATA=/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_zh_l3
-    DATASET=ufw_zh_l3_v3 ;;
+    DATASET=ufw_zh_l3 ;;
   *)
     echo "未知语言: $LANG"; exit 1 ;;
 esac
@@ -74,4 +74,3 @@ while IFS= read -r f; do
 done < <(find "$DATA" -name "*.parquet" | sort)
 
 echo "=== Cascade $DATASET 结束: pass=$pass fail=$fail skip=$skip  $(date) ===" | tee -a "$LOG"
-

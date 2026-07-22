@@ -17,7 +17,7 @@
 
 ## 输入输出
 
-**输入**：标准 Document（通过 `src/reader.py`）
+**输入**：标准 Document（通过 `pretrain_data_eval/reader.py`）
 
 **Per-doc scores**：
 - `token_count` — 文档 token 数

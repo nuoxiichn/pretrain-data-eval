@@ -1,0 +1,102 @@
+official:
+  results_path: data/trainability/datadecide_official/macro_avg-00000-of-00001.parquet
+  results_url: https://huggingface.co/datasets/allenai/DataDecide-eval-results/blob/main/data/macro_avg-00000-of-00001.parquet
+  target_scale: 1B
+  target_task: olmes_10_macro_avg
+  proxy_scales: [20M, 60M, 150M]
+  tasks_and_metrics:
+    olmes_10_macro_avg: primary_metric
+    arc_easy: correct_prob_per_char
+    arc_challenge: correct_prob_per_char
+    mmlu: correct_prob_per_char
+    hellaswag: correct_prob_per_char
+
+recipes:
+  falcon_raw:
+    family: falcon
+    official_name: Falcon+CC
+    official_recipe: falcon_and_cc
+    model_repo_template: allenai/DataDecide-falcon-and-cc-{scale}
+  falcon_qc20:
+    family: falcon
+    official_name: Falcon+CC (QC 20%)
+    official_recipe: falcon_and_cc_eli5_oh_top20p
+    model_repo_template: allenai/DataDecide-falcon-and-cc-qc-20p-{scale}
+  falcon_orig10:
+    family: falcon
+    official_name: Falcon+CC (QC Orig 10%)
+    official_recipe: falcon_and_cc_og_eli5_oh_top10p
+    model_repo_template: allenai/DataDecide-falcon-and-cc-qc-orig-10p-{scale}
+  dclm_raw:
+    family: dclm
+    official_name: DCLM-Baseline
+    official_recipe: DCLM-baseline
+    model_repo_template: allenai/DataDecide-dclm-baseline-{scale}
+  dclm_fw2:
+    family: dclm
+    official_name: DCLM-Baseline (QC 7%, FW2)
+    official_recipe: dclm_ft7percentile_fw2
+    model_repo_template: allenai/DataDecide-dclm-baseline-qc-7p-fw2-{scale}
+  dclm_fw3:
+    family: dclm
+    official_name: DCLM-Baseline (QC 7%, FW3)
+    official_recipe: dclm_ft7percentile_fw3
+    model_repo_template: allenai/DataDecide-dclm-baseline-qc-7p-fw3-{scale}
+  dolma_raw:
+    family: dolma
+    official_name: Dolma1.7
+    official_recipe: dolma17
+    model_repo_template: allenai/DataDecide-dolma1_7-{scale}
+  dolma_no_flan:
+    family: dolma
+    official_name: Dolma1.7 (no Flan)
+    official_recipe: no_flan
+    model_repo_template: allenai/DataDecide-dolma1_7-no-flan-{scale}
+
+edges:
+  - name: falcon_qc20_over_raw
+    winner: falcon_qc20
+    loser: falcon_raw
+  - name: falcon_orig10_over_qc20
+    winner: falcon_orig10
+    loser: falcon_qc20
+  - name: dclm_fw2_over_raw
+    winner: dclm_fw2
+    loser: dclm_raw
+  - name: dclm_raw_over_fw3_crossover
+    winner: dclm_raw
+    loser: dclm_fw3
+  - name: dolma_no_flan_over_raw
+    winner: dolma_no_flan
+    loser: dolma_raw
+
+olmes:
+  commit: 5a51f502d463b8cdc4a2dcad7d7096c41ff1197e
+  endpoint: https://hf-mirror.com
+  tasks:
+    - arc_challenge:rc::olmes
+    - arc_easy:rc::olmes
+    - boolq:rc::olmes
+    - csqa:rc::olmes
+    - hellaswag:rc::olmes
+    - openbookqa:rc::olmes
+    - piqa:rc::olmes
+    - socialiqa:rc::olmes
+    - winogrande:rc::olmes
+    - mmlu:rc::olmes
+  decision_tasks: [arc_easy, arc_challenge, mmlu]
+  supplemental_tasks: [hellaswag]
+  excluded_decision_tasks: [boolq]
+
+local_training:
+  recipes: [falcon_raw, falcon_qc20, falcon_orig10]
+  model_scale: 20M
+  steps: 14584
+  target_tokens: 1911554048
+  seeds: [6198, 14, 15]
+  named_data_mixes_commit: 55d4871d7777f5cc4561f8e508f635f9c6308bbc
+  data_repo: allenai/DataDecide-data-recipes
+  data_revision: 3baf34baf5b636f0943401b5c6a2ccb7e5cf3bb9
+  tokenizer_path: data/trainability/datadecide_tokens/tokenizer.json
+  chunks_per_recipe: 24
+  endpoint: https://hf-mirror.com

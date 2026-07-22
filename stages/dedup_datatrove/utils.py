@@ -21,6 +21,8 @@ from datatrove.io import get_datafolder
 from datatrove.pipeline.base import PipelineStep
 from datatrove.pipeline.dedup.minhash import MinhashConfig
 
+from pretrain_data_eval.schema import DocResult, prepare_summary
+
 
 # ---------------------------------------------------------------------------
 # Config：严格照 stages/dedup/utils.py 的自实现取值，保证 sanity 步骤可比对
@@ -170,19 +172,23 @@ def aggregate(
                     near_dup_docs += 1
                 if cid is not None:
                     cluster_id_to_members[cid] = cluster_id_to_members.get(cid, 0) + 1
-                rec = {
-                    "doc_id": doc_id,
-                    "scores": {
+                rec = DocResult(
+                    doc_id=doc_id,
+                    scores={
                         "cluster_id": int(cid) if cid is not None else -1,
                         "cluster_size": int(csize),
                         "near_dup_count": max(int(csize) - 1, 0),
                     },
-                    "flags": {
+                    flags={
                         "is_near_dup": bool(in_multi),
                         "in_multi_cluster": bool(in_multi),
                     },
-                }
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                )
+                f.write(
+                    json.dumps(
+                        rec.to_dict(), ensure_ascii=False, allow_nan=False
+                    ) + "\n"
+                )
 
     multi_clusters = [n for n in cluster_id_to_members.values() if n >= 2]
 
@@ -207,8 +213,12 @@ def aggregate(
         "clusters_folder": str(clusters_folder),
         "docids_folder": str(docids_folder),
     }
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
-    return summary
+    payload = prepare_summary(summary)
+    summary_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return payload
 
 
 def _jaccard_threshold_estimate(num_bands: int, band_size: int) -> float:
@@ -218,4 +228,3 @@ def _jaccard_threshold_estimate(num_bands: int, band_size: int) -> float:
 
 def now_ts() -> str:
     return time.strftime("%Y%m%d_%H%M%S")
-

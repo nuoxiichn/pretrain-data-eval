@@ -89,9 +89,8 @@ cascade:
     band_size: 4
     window_size: 150
     window_stride: 75
-    # 2026-06-29: 0.30 → 0.20，sanity 测试发现 L3_cos 重写型污染在 0.30 阈值下 100% 漏检
-    # （5 条 jaccard 实测: 0.000, 0.156, 0.273, 0.000, 0.273），降到 0.20 可救回 0.273×2 条
-    # 注：0.000 那两条任何 L2 阈值都救不回，仍属 known-gap（见 实施方案.md §3.5）
+    # 注入重写样本中存在 jaccard≈0.27 的候选，因此从 0.20 开始进入 L3。
+    # jaccard 接近 0 的深度改写仍可能在 L2 被漏掉。
     enter_l3_low: 0.20
     enter_l3_high: 0.90
   layer3:

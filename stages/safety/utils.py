@@ -17,8 +17,8 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from src.reader import Document
-from src.schema import DocResult
+from pretrain_data_eval.reader import Document
+from pretrain_data_eval.schema import DocResult
 
 
 # ── PII entity lists ──────────────────────────────────────────────────────────

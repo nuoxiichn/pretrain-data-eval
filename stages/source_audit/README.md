@@ -1,6 +1,6 @@
 # Stage 1：来源审计 + 时间属性
 
-**类型**：📋 审计阶段  
+**类型**：只读审计阶段
 **目录**：`source_audit/`  
 **配置**：`configs/stage1.yaml`
 
@@ -10,14 +10,14 @@
 
 ## 子命令
 
-| 子命令 | pipeline 行 | 描述 |
-|--------|------------|------|
-| `stats` | 行 1 | 文档数/字符数/token 数、长度分桶、域名/来源/语种分布、时间字段完整性 |
-| `license` | 行 2 | ScanCode 许可证与版权检测（SPDX 表达式 + 置信度 + 行号） |
+| 子命令 | 描述 |
+|--------|------|
+| `stats` | 文档数/字符数/token 数、长度分桶、域名/来源/语种分布、时间字段完整性 |
+| `license` | ScanCode 许可证与版权检测（SPDX 表达式 + 置信度 + 行号） |
 
 ## 输入格式
 
-JSONL，每行一个文档（字段约定见 `src/reader.py`）：
+JSONL，每行一个文档（字段约定见 `pretrain_data_eval/reader.py`）：
 
 ```json
 {"doc_id": "...", "text": "...", "source": "...", "url": "...", "timestamp": "...", "language": "...", "meta": {}}
@@ -32,7 +32,7 @@ JSONL，每行一个文档（字段约定见 `src/reader.py`）：
 ```
 stats/
   summary.json       # 聚合统计（规模、分布、时间完整性）
-  per_doc.jsonl      # 每文档 {"doc_id":..., "scores":{...}, "flags":{...}}
+  per_doc.jsonl      # 每文档公共 schema 头 + doc_id/scores/flags
 license/
   summary.json       # 许可证类型分布、命中率
   per_doc.jsonl      # 每文档许可证命中列表 + 版权持有人
@@ -43,12 +43,12 @@ license/
 | 子命令 | 依赖 |
 |--------|------|
 | `stats` | `numpy` |
-| `license` | `scancode-toolkit`（需单独安装） |
+| `license` | `python -m pip install -e '.[license]'` |
 
 ## 运行
 
 ```bash
-# 开发模式安装（让 src/ 包可导入）
+# 开发模式安装（让 pretrain_data_eval/ 包可导入）
 pip install -e .
 
 # 基础统计（默认 hf backend，Qwen3-4B-Base tokenizer）

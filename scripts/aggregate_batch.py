@@ -21,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
+from pretrain_data_eval.schema import prepare_summary
+
 
 def _find_summaries(base_dir: Path) -> list[dict]:
     """收集 base_dir 下所有子目录中的 summary.json。"""
@@ -525,10 +527,12 @@ def main():
         merged = detect_and_merge(base_dir)
         if not merged:
             continue
+        merged = prepare_summary(merged)
 
         out_path = base_dir / "aggregated_summary.json"
         with out_path.open("w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2)
+            json.dump(merged, f, ensure_ascii=False, indent=2, allow_nan=False)
+            f.write("\n")
         print(f"[OK] {out_path}")
         print(f"     total_docs = {merged.get('total_docs', merged.get('total_docs_scanned', '?'))}")
         print(f"     aggregated_from = {merged.get('aggregated_from', '?')} files")

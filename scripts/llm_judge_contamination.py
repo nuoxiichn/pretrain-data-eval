@@ -11,7 +11,7 @@
 Design notes
 ------------
 - 复用 stage2 toxicity 的 vLLM judge 骨架（`_JUDGE_SYSTEM_PROMPT` 结构）
-- 输入源：`outputs/stage5/ufw_*_l3_v3/cascade_sample500/*/per_doc.jsonl` 中 verdict=yellow 的 doc
+- 输入源：`outputs/stage5/ufw_*_l3/cascade_sample500/*/per_doc.jsonl` 中 verdict=yellow 的 doc
 - 需要重新从原 parquet 加载 doc.text（per_doc.jsonl 只有 doc_id）
 - benchmark 内容从 `/mnt/public/data/contamination_v3_benchmarks/eval_aligned/*.jsonl` 拿
 - 单次 doc.text 截断：取前 3000 char（yellow 匹配到的往往在文档开头/中间，实测足够）
@@ -19,8 +19,8 @@ Design notes
 Usage
 -----
 PYTHONPATH=. python scripts/llm_judge_contamination.py \\
-    --datasets ufw_en_l3_v3 ufw_zh_l3_v3 \\
-    --output outputs/stage5/llm_judge_v3/per_yellow_judgement.jsonl
+    --datasets ufw_en_l3 ufw_zh_l3 \\
+    --output outputs/stage5/llm_judge/per_yellow_judgement.jsonl
 """
 from __future__ import annotations
 
@@ -36,18 +36,19 @@ if str(_ROOT) not in sys.path:
 
 import click
 
-from src.reader import read_documents
-from src.sampling import sample_documents
+from pretrain_data_eval.reader import read_documents
+from pretrain_data_eval.sampling import sample_documents
+from pretrain_data_eval.schema import prepare_summary
 
 
 BENCH_DIR = Path("/mnt/public/data/contamination_v3_benchmarks/eval_aligned")
 DATASET_DATA_ROOT = {
-    "ufw_en_l3_v3": Path("/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_en_l3"),
-    "ufw_zh_l3_v3": Path("/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_zh_l3"),
+    "ufw_en_l3": Path("/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_en_l3"),
+    "ufw_zh_l3": Path("/mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_zh_l3"),
 }
 DATASET_CASCADE = {
-    "ufw_en_l3_v3": Path("outputs/stage5/ufw_en_l3_v3/cascade_sample500"),
-    "ufw_zh_l3_v3": Path("outputs/stage5/ufw_zh_l3_v3/cascade_sample500"),
+    "ufw_en_l3": Path("outputs/stage5/ufw_en_l3/cascade_sample500"),
+    "ufw_zh_l3": Path("outputs/stage5/ufw_zh_l3/cascade_sample500"),
 }
 
 _JUDGE_VERDICTS = ("contamination", "abstraction", "unrelated")
@@ -316,11 +317,11 @@ def _build_user_content(target: dict, bench_info: dict, max_doc_chars: int) -> s
 
 
 @click.command()
-@click.option("--datasets", multiple=True, default=("ufw_en_l3_v3", "ufw_zh_l3_v3"),
+@click.option("--datasets", multiple=True, default=("ufw_en_l3", "ufw_zh_l3"),
               show_default=True, help="要复审的 cascade 数据集")
-@click.option("--output", default="outputs/stage5/llm_judge_v3/per_yellow_judgement.jsonl",
+@click.option("--output", default="outputs/stage5/llm_judge/per_yellow_judgement.jsonl",
               show_default=True)
-@click.option("--summary", default="outputs/stage5/llm_judge_v3/summary.json",
+@click.option("--summary", default="outputs/stage5/llm_judge/summary.json",
               show_default=True)
 @click.option("--model-path", default="/mnt/public/model/huggingface/Qwen2.5-7B-Instruct",
               show_default=True)
@@ -432,7 +433,7 @@ def main(datasets, output, summary, model_path, max_doc_chars,
             unrelated_by_bench[b] += 1
         verdict_by_dataset[t["dataset"]][v["verdict"]] += 1
 
-    sm = {
+    sm = prepare_summary({
         "total_yellow_reviewed": len(kept),
         "dropped_no_text": dropped_no_text,
         "dropped_no_bench": dropped_no_bench,
@@ -445,9 +446,12 @@ def main(datasets, output, summary, model_path, max_doc_chars,
         "model_path": model_path,
         "max_doc_chars": max_doc_chars,
         "temperature": temperature,
-    }
+    })
     Path(summary).parent.mkdir(parents=True, exist_ok=True)
-    Path(summary).write_text(json.dumps(sm, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path(summary).write_text(
+        json.dumps(sm, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
     click.echo("\n=== LLM Judge 汇总 ===")
     click.echo(f"复审总数: {len(kept)}")

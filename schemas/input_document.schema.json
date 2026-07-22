@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pretrain-data-eval.local/schemas/input_document.schema.json",
+  "title": "Normalized input document",
+  "type": "object",
+  "required": ["doc_id", "text", "source", "url", "timestamp", "language", "meta"],
+  "properties": {
+    "doc_id": {"type": "string", "minLength": 1},
+    "text": {"type": "string"},
+    "source": {"type": ["string", "null"]},
+    "url": {"type": ["string", "null"]},
+    "timestamp": {"type": ["string", "null"]},
+    "language": {"type": ["string", "null"]},
+    "meta": {"type": "object"}
+  },
+  "additionalProperties": false
+}

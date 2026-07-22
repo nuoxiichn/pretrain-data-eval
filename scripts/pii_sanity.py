@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json, sys
-from src.reader import read_documents
+from pretrain_data_eval.reader import read_documents
 from stages.safety.utils import compute_pii
 
 def main():
