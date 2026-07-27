@@ -26,7 +26,8 @@ quality:                      # Gopher Quality + C4，中英双语适配（jieba
 
 extraction:                   # 行 1：抽取质量审计（已清洗文本残留检测）
   short_stub_chars: 50        # 正文 < 此字符数视为抽取残桩；按字符计对 CJK 更公平
-  # HTML 走白名单 + 计数阈值，boilerplate 加位置权重，汇总使用加权风险分。
+  # v2 阈值（2026-06 改造）：HTML 走白名单 + 计数阈值，boilerplate 加位置权重，
+  # 汇总红灯改加权风险分而非 OR-gate。改阈值前看 README「extraction」章节。
   html_tag_min_count: 3                 # 白名单 HTML 标签至少出现 N 次才算残留
   html_entity_min_count: 1              # &amp; / &nbsp; 这类实体出现 N 次即触发
   boilerplate_edge_ratio: 0.05          # 头/尾区比例

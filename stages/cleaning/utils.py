@@ -14,8 +14,8 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from pretrain_data_eval.reader import Document
-from pretrain_data_eval.schema import DocResult
+from src.reader import Document
+from src.schema import DocResult
 
 
 # ── Language identification ───────────────────────────────────────────────────

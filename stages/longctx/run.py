@@ -6,7 +6,9 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -16,7 +18,7 @@ if str(_ROOT) not in sys.path:
 import click
 import yaml
 
-from pretrain_data_eval.schema import make_output_dir, use_output_dir, write_per_doc, write_summary
+from src.schema import make_output_dir, use_output_dir, write_per_doc, write_summary
 from stages.longctx.utils import compute_config_audit
 
 

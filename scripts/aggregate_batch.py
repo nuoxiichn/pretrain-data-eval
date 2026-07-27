@@ -21,8 +21,6 @@ from pathlib import Path
 
 import numpy as np
 
-from pretrain_data_eval.schema import prepare_summary
-
 
 def _find_summaries(base_dir: Path) -> list[dict]:
     """收集 base_dir 下所有子目录中的 summary.json。"""
@@ -319,58 +317,6 @@ def merge_contamination_exact(summaries: list[dict]) -> dict:
     }
 
 
-def merge_contamination_cascade(summaries: list[dict]) -> dict:
-    """合并 cascade per-file summary: verdict 分布 + 三层 cost + 跨语言.
-
-    输入字段：total_docs / verdict_distribution {red,yellow,green} /
-              cost_breakdown {l1_processed, l2_processed, l3_processed} /
-              cross_lingual_docs / per_benchmark_red_hits /
-              l1_red_count / l2_red_count / l2_green_count
-    """
-    total = sum(s.get("total_docs", 0) for s in summaries)
-    verdict: Counter = Counter()
-    cost = Counter()
-    bench_red: Counter = Counter()
-    cross_lingual = 0
-    l1_red = 0
-    l2_red = 0
-    l2_green = 0
-    for s in summaries:
-        verdict.update({k: v for k, v in s.get("verdict_distribution", {}).items()
-                        if isinstance(v, (int, float))})
-        cost.update({k: v for k, v in s.get("cost_breakdown", {}).items()
-                     if isinstance(v, (int, float))})
-        bench_red.update({k: v for k, v in s.get("per_benchmark_red_hits", {}).items()
-                          if isinstance(v, (int, float))})
-        cross_lingual += s.get("cross_lingual_docs", 0)
-        l1_red += s.get("l1_red_count", 0)
-        l2_red += s.get("l2_red_count", 0)
-        l2_green += s.get("l2_green_count", 0)
-    red = verdict.get("red", 0)
-    yellow = verdict.get("yellow", 0)
-    green = verdict.get("green", 0)
-    return {
-        "total_docs": total,
-        "verdict_distribution": {
-            "red": red, "red_pct": _recompute_pct(total, red),
-            "yellow": yellow, "yellow_pct": _recompute_pct(total, yellow),
-            "green": green, "green_pct": _recompute_pct(total, green),
-        },
-        "cost_breakdown": dict(cost),
-        "layer_red_breakdown": {
-            "l1_red": l1_red,                # L1 exact 命中
-            "l2_red": l2_red,                # L2 jaccard ≥ 0.90 直判
-            "l3_red": red - l1_red - l2_red, # 余量 = L3 cos ≥ red 判定
-        },
-        "cross_lingual_docs": cross_lingual,
-        "cross_lingual_pct": _recompute_pct(total, cross_lingual),
-        "per_benchmark_red_hits": dict(bench_red.most_common()),
-        "thresholds": summaries[0].get("thresholds", {}) if summaries else {},
-        "aggregated_from": len(summaries),
-        "note": "cascade head-sample 500/file，非全量；统计估计而非精确总和",
-    }
-
-
 def merge_extraction(summaries: list[dict]) -> dict:
     total = sum(s.get("total_docs", s.get("total_docs_scanned", 0)) for s in summaries)
     result: dict = {"total_docs": total, "aggregated_from": len(summaries)}
@@ -483,8 +429,6 @@ MERGE_MAP_WITH_DIR = {
 MERGE_MAP_STAGE = {
     "stage5": {
         "exact": merge_contamination_exact,
-        "cascade_sample500": merge_contamination_cascade,
-        "cascade": merge_contamination_cascade,
     },
 }
 
@@ -527,12 +471,10 @@ def main():
         merged = detect_and_merge(base_dir)
         if not merged:
             continue
-        merged = prepare_summary(merged)
 
         out_path = base_dir / "aggregated_summary.json"
         with out_path.open("w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2, allow_nan=False)
-            f.write("\n")
+            json.dump(merged, f, ensure_ascii=False, indent=2)
         print(f"[OK] {out_path}")
         print(f"     total_docs = {merged.get('total_docs', merged.get('total_docs_scanned', '?'))}")
         print(f"     aggregated_from = {merged.get('aggregated_from', '?')} files")

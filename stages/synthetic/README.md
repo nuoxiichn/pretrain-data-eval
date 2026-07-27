@@ -8,8 +8,6 @@
 |--------|------|------|------|
 | `binoculars` | AI 生成文本检测（observer/performer 双模型对比打分） | 自实现（Binoculars, ICML 2024） | torch, transformers, GPU（两个 7B fp16 ≈ 28 GB） |
 
-安装推理依赖：`python -m pip install -e '.[gpu]'`。
-
 ## 原理
 
 Binoculars 用两个共享 tokenizer 的语言模型：
@@ -36,7 +34,7 @@ Binoculars 用两个共享 tokenizer 的语言模型：
 
 - **输入**：标准 `read_documents` 接口（Parquet/JSONL）
 - **输出**：
-  - `per_doc.jsonl`：公共 schema 头 + `doc_id` + `scores.binoculars` + `flags.is_ai_generated`
+  - `per_doc.jsonl`：`{"doc_id", "scores": {"binoculars": float}, "flags": {"is_ai_generated": bool}}`
   - `summary.json`：AI 生成文档数/比例 + 分数分布统计（mean/std/分位数）
 
 ## 运行示例

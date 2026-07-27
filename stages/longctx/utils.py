@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from pretrain_data_eval.schema import DocResult
+from src.schema import DocResult
 
 
 _REQUIRED_PARAMS = {

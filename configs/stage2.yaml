@@ -26,17 +26,15 @@ pii:
 secrets:
   gitleaks_bin: gitleaks     # gitleaks 二进制路径或命令名
 
-toxicity:                    # chunk 切分 + XLM-R 召回 + Qwen LLM-judge
-  recall_model_path: /mnt/public/data/models/xlmr-large-toxicity-classifier
-  judge_model_path: /mnt/public/model/huggingface/Qwen2.5-7B-Instruct
-  chunk_size: 512            # XLM-R tokenizer 子词数；超过截断/切块
-  chunk_overlap: 64          # 相邻 chunk 重叠子词数，避免句子被切断
-  recall_threshold: 0.5      # chunk 维度 XLM-R toxicity ≥ 此值进入 LLM 复审
-  recall_batch_size: 16
-  judge_max_tokens: 256      # judge 输出 JSON 上限
-  judge_temperature: 0.0     # 复审稳定性优先
-  judge_gpu_mem_util: 0.85   # vLLM gpu_memory_utilization；与召回模型共卡时手动调低
-  judge_max_chunks_per_doc: 8  # 单文档最多送审 chunk 数（按 XLM-R 分数倒序），防极端长文档拖慢
+toxicity:
+  model_path: /mnt/public/data/models/xlmr-large-toxicity-classifier
+                             # 支持两类模型，自动识别：
+                             #   多标签（detoxify unbiased RoBERTa）→ sigmoid，7 维打分
+                             #   二分类（xlmr-large-toxicity-classifier 等）→ softmax，单维 toxicity
+                             # 备选英文 7 维：/mnt/public/model/detoxify/unbiased-toxic-roberta
+                             # 切换时改此路径即可，无需改代码。
+  high_risk_threshold: 0.5   # toxicity 维度超过此值视为高风险
+  batch_size: 16             # 推理批大小
 
 output:
   base_dir: outputs/stage2

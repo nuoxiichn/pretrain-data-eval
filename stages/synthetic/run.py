@@ -19,9 +19,9 @@ if str(_ROOT) not in sys.path:
 import click
 import yaml
 
-from pretrain_data_eval.reader import read_documents
-from pretrain_data_eval.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
-from pretrain_data_eval.schema import DocResult, make_output_dir, use_output_dir, write_summary
+from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
+from src.schema import DocResult, make_output_dir, use_output_dir, write_summary
 from stages.synthetic.utils import compute_binoculars
 
 

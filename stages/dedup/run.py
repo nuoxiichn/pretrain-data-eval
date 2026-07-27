@@ -21,14 +21,13 @@ if str(_ROOT) not in sys.path:
 import click
 import yaml
 
-from pretrain_data_eval.reader import read_documents
-from pretrain_data_eval.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
-from pretrain_data_eval.schema import DocResult, make_output_dir, use_output_dir, write_summary
+from src.reader import read_documents
+from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
+from src.schema import DocResult, make_output_dir, use_output_dir, write_per_doc, write_summary
 from stages.dedup.utils import (
     compute_exact_dedup,
     compute_minhash_dedup,
     compute_ngram_dedup,
-    compute_repetition_audit,
     compute_semdedup,
 )
 
@@ -258,51 +257,6 @@ def ngram(input_path, dataset, config_path, output_base, output_dir,
         f"  受影响文档 {summary['contaminated_docs']} ({summary['contaminated_pct']:.1%})"
     )
     click.echo(f"  -> {sm_path}")
-    click.echo(f"  -> {per_doc_path}")
-
-
-# ── within-document repetition ───────────────────────────────────────────────
-
-@cli.command()
-@click.option("--input", "input_path", required=True)
-@click.option("--dataset", required=True)
-@click.option("--config", "config_path", default="configs/stage4.yaml", show_default=True)
-@click.option("--output-base", default="outputs/stage4", show_default=True)
-@click.option("--output-dir", default=None)
-@click.option("--input-format", default=None)
-@click.option("--max-docs", default=None, type=int)
-@click.option("--sample-mode", default=DEFAULT_SAMPLE_MODE, type=click.Choice(SAMPLE_MODES))
-@click.option("--seed", default=DEFAULT_SEED, type=int, show_default=True)
-def repetition(input_path, dataset, config_path, output_base, output_dir,
-               input_format, max_docs, sample_mode, seed):
-    """Gopher-style within-document repetition audit."""
-    cfg = _load_config(config_path)
-    input_cfg = dict(cfg.get("input", {}))
-    if input_format:
-        input_cfg["format"] = input_format
-    docs = sample_documents(
-        read_documents(input_path, config=input_cfg),
-        max_docs,
-        mode=sample_mode,
-        seed=seed,
-    )
-    out_dir = _resolve_output(output_dir, output_base, dataset, "repetition")
-    per_doc_path = out_dir / "per_doc.jsonl"
-    with per_doc_path.open("w", encoding="utf-8") as handle:
-        def _write(result: DocResult) -> None:
-            handle.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
-
-        _, summary = compute_repetition_audit(
-            docs,
-            thresholds=cfg.get("repetition"),
-            on_doc=_write,
-        )
-    summary_path = write_summary(summary, out_dir)
-    click.echo(
-        f"[repetition] 高重复 {summary['high_repetition_docs']} / "
-        f"{summary['total_docs']} 条 ({summary['high_repetition_pct']:.1%})"
-    )
-    click.echo(f"  -> {summary_path}")
     click.echo(f"  -> {per_doc_path}")
 
 

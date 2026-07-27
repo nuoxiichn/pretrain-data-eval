@@ -13,8 +13,8 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from pretrain_data_eval.reader import Document
-from pretrain_data_eval.schema import DocResult
+from src.reader import Document
+from src.schema import DocResult
 
 
 # ── Distribution stats ───────────────────────────────────────────────────────
@@ -41,55 +41,9 @@ def _dist_stats(values: list[float], pcts: tuple = (5, 25, 50, 75, 95)) -> dict:
 
 _PARSER_CACHE: dict[str, tuple] = {}
 
-# 语言 → (grammar 模块名, 取 Language 指针的函数名)。多数包为 language()，
-# typescript / php 例外（一个包内含多个方言）。新增语言只需装 tree-sitter-<lang> 后加一行。
-_GRAMMARS: dict[str, tuple[str, str]] = {
-    "python":     ("tree_sitter_python", "language"),
-    "javascript": ("tree_sitter_javascript", "language"),
-    "typescript": ("tree_sitter_typescript", "language_typescript"),
-    "java":       ("tree_sitter_java", "language"),
-    "go":         ("tree_sitter_go", "language"),
-    "c":          ("tree_sitter_c", "language"),
-    "cpp":        ("tree_sitter_cpp", "language"),
-    "c-sharp":    ("tree_sitter_c_sharp", "language"),
-    "rust":       ("tree_sitter_rust", "language"),
-    "ruby":       ("tree_sitter_ruby", "language"),
-    "php":        ("tree_sitter_php", "language_php"),
-}
-
-# 归一化：The Stack 的 `lang` 字段（如 "C++"）/常见别名 → _GRAMMARS 键。
-_LANG_ALIASES: dict[str, str] = {
-    "python": "python",
-    "javascript": "javascript", "js": "javascript",
-    "typescript": "typescript", "ts": "typescript",
-    "java": "java",
-    "go": "go", "golang": "go",
-    "c": "c",
-    "c++": "cpp", "cpp": "cpp",
-    "c#": "c-sharp", "csharp": "c-sharp", "c-sharp": "c-sharp",
-    "rust": "rust",
-    "ruby": "ruby",
-    "php": "php",
-}
-
-
-def normalize_language(language: str) -> str:
-    """把 The Stack `lang` / 别名归一到 _GRAMMARS 键；未知则原样小写返回。"""
-    return _LANG_ALIASES.get(language.strip().lower(), language.strip().lower())
-
-
-def supported_languages() -> list[str]:
-    """当前 env 实际可解析的语言（grammar 已安装）。"""
-    out = []
-    for name in _GRAMMARS:
-        if _get_parser(name) is not None:
-            out.append(name)
-    return out
-
 
 def _get_parser(language: str):
     """Get a (Parser, Language) tuple for the given language. Returns None if unsupported."""
-    language = normalize_language(language)
     if language in _PARSER_CACHE:
         return _PARSER_CACHE[language]
 
@@ -98,15 +52,13 @@ def _get_parser(language: str):
     except ImportError:
         return None
 
-    spec = _GRAMMARS.get(language)
-    if spec is None:
-        return None
-    module_name, attr = spec
-    try:
-        import importlib
-        mod = importlib.import_module(module_name)
-        lang = Language(getattr(mod, attr)())
-    except (ImportError, AttributeError):
+    if language == "python":
+        try:
+            import tree_sitter_python as tspython
+            lang = Language(tspython.language())
+        except ImportError:
+            return None
+    else:
         return None
 
     parser = Parser(lang)
@@ -115,28 +67,14 @@ def _get_parser(language: str):
 
 
 def _count_errors(node) -> tuple[int, int]:
-    """Count (error_nodes, total_nodes) in a tree-sitter AST.
-
-    迭代遍历（显式栈），避免深层嵌套 AST（如大型 C/C++ 文件）触发
-    Python 递归上限 RecursionError。
-    """
-    errors = 0
-    total = 0
-    stack = [node]
-    while stack:
-        n = stack.pop()
-        total += 1
-        if n.type == "ERROR" or n.is_missing:
-            errors += 1
-        stack.extend(n.children)
+    """Recursively count (error_nodes, total_nodes) in a tree-sitter AST."""
+    errors = 1 if (node.type == "ERROR" or node.is_missing) else 0
+    total = 1
+    for child in node.children:
+        ce, ct = _count_errors(child)
+        errors += ce
+        total += ct
     return errors, total
-
-
-def _doc_language(doc: Document, default: str) -> str:
-    """从文档取代码语言：优先 meta.lang（The Stack）→ language 字段 → default。"""
-    meta = doc.get("meta") or {}
-    raw = meta.get("lang") or meta.get("language") or doc.get("language") or default
-    return normalize_language(str(raw))
 
 
 def compute_parsability(
@@ -146,22 +84,19 @@ def compute_parsability(
 ) -> tuple[list[DocResult], dict]:
     """Check code parsability using tree-sitter.
 
-    language="auto" 时按每条文档的 `lang`/`language` 字段选 parser（用于混合语料）；
-    否则整批用同一语言。返回 (per_doc_results, summary_dict)。
+    Returns (per_doc_results, summary_dict).
     """
     doc_list = list(docs)
     if not doc_list:
         return [], {"total_docs": 0}
 
-    auto = normalize_language(language) == "auto"
-    if not auto:
-        result_pair = _get_parser(language)
-        if result_pair is None:
-            raise RuntimeError(
-                f"tree-sitter 不支持语言 '{language}'。"
-                f"确保已安装 tree-sitter 和对应语法包（如 tree-sitter-python）。"
-                f" 当前可用: {supported_languages()}"
-            )
+    result_pair = _get_parser(language)
+    if result_pair is None:
+        raise RuntimeError(
+            f"tree-sitter 不支持语言 '{language}'。"
+            f"确保已安装 tree-sitter 和对应语法包（如 tree-sitter-python）。"
+        )
+    parser, _ = result_pair
 
     per_doc: list[DocResult] = []
     error_ratios: list[float] = []
@@ -169,39 +104,19 @@ def compute_parsability(
     has_error_count = 0
     parsed_count = 0
     unparsable_count = 0
-    unsupported_count = 0
-    lang_counts: Counter = Counter()          # 实际解析的语言分布
-    unsupported_langs: Counter = Counter()     # auto 模式下无 grammar 的语言
 
     for doc in doc_list:
         doc_id = str(doc["doc_id"])
         text = str(doc.get("text") or "")
-        doc_lang = _doc_language(doc, language) if auto else normalize_language(language)
 
         if not text.strip():
             result = DocResult(
                 doc_id=doc_id,
                 scores={"error_node_count": 0, "total_node_count": 0, "error_ratio": 0.0},
-                flags={"has_error": False, "unsupported_lang": False},
+                flags={"has_error": False},
             )
             unparsable_count += 1
         else:
-            parser_pair = _get_parser(doc_lang) if auto else _get_parser(language)
-            if parser_pair is None:
-                # auto 模式下遇到无 grammar 的语言：记录但不计入错误率
-                unsupported_count += 1
-                unsupported_langs[doc_lang] += 1
-                result = DocResult(
-                    doc_id=doc_id,
-                    scores={"error_node_count": 0, "total_node_count": 0, "error_ratio": 0.0},
-                    flags={"has_error": False, "unsupported_lang": True},
-                )
-                if on_doc is not None:
-                    on_doc(result)
-                else:
-                    per_doc.append(result)
-                continue
-            parser, _ = parser_pair
             tree = parser.parse(text.encode("utf-8", errors="replace"))
             errors, total = _count_errors(tree.root_node)
             ratio = errors / total if total > 0 else 0.0
@@ -214,10 +129,9 @@ def compute_parsability(
                     "total_node_count": total,
                     "error_ratio": round(ratio, 6),
                 },
-                flags={"has_error": has_err, "unsupported_lang": False},
+                flags={"has_error": has_err},
             )
             parsed_count += 1
-            lang_counts[doc_lang] += 1
             error_ratios.append(ratio)
             error_counts.append(errors)
             if has_err:
@@ -233,12 +147,9 @@ def compute_parsability(
         "total_docs": total,
         "parsed_docs": parsed_count,
         "unparsable_docs": unparsable_count,
-        "unsupported_lang_docs": unsupported_count,
         "has_error_docs": has_error_count,
         "has_error_pct": round(has_error_count / parsed_count, 4) if parsed_count else 0.0,
         "language": language,
-        "parsed_lang_distribution": dict(lang_counts.most_common()),
-        "unsupported_lang_distribution": dict(unsupported_langs.most_common()),
         "error_ratio_stats": _dist_stats(error_ratios),
         "error_count_stats": _dist_stats([float(c) for c in error_counts]),
     }
@@ -377,16 +288,6 @@ def compute_stem(
     high_diff_count = 0
     parse_failed_count = 0
 
-    # 按 source（如 ultrafineweb_multi_style / ultrafineweb_qa）拆分，
-    # 供 ZH high_difficulty=0% 归因等子分布分析。
-    src_total: Counter[str] = Counter()
-    src_stem: Counter[str] = Counter()
-    src_high_diff: Counter[str] = Counter()
-    src_parse_failed: Counter[str] = Counter()
-    src_fdc: dict[str, Counter[int]] = {}
-    src_rd: dict[str, Counter[int]] = {}
-    src_edu: dict[str, Counter[int]] = {}
-
     n = len(doc_list)
     for start_i in range(0, n, batch_size):
         batch_docs = doc_list[start_i : start_i + batch_size]
@@ -466,49 +367,12 @@ def compute_stem(
             if high_diff:
                 high_diff_count += 1
 
-            src = str(doc.get("source") or "unknown")
-            src_total[src] += 1
-            if parsed["parse_failed"]:
-                src_parse_failed[src] += 1
-            if is_stem:
-                src_stem[src] += 1
-            if high_diff:
-                src_high_diff[src] += 1
-            if top_cls is not None:
-                src_fdc.setdefault(src, Counter())[top_cls] += 1
-            if rd is not None:
-                src_rd.setdefault(src, Counter())[rd] += 1
-            if parsed["educational_level"] is not None:
-                src_edu.setdefault(src, Counter())[parsed["educational_level"]] += 1
-
     fdc_top_distribution = {}
     for cls, label in FDC_TOP_LABELS.items():
         cnt = fdc_counter.get(cls, 0)
         fdc_top_distribution[f"{cls:03d} {label}"] = {
             "docs": cnt,
             "pct": round(cnt / n, 4) if n else 0.0,
-        }
-
-    source_breakdown: dict[str, dict] = {}
-    for src, src_n in src_total.items():
-        src_fdc_dist = {}
-        for cls, label in FDC_TOP_LABELS.items():
-            cnt = src_fdc.get(src, Counter()).get(cls, 0)
-            src_fdc_dist[f"{cls:03d} {label}"] = {
-                "docs": cnt,
-                "pct": round(cnt / src_n, 4) if src_n else 0.0,
-            }
-        source_breakdown[src] = {
-            "total_docs": src_n,
-            "stem_docs": src_stem.get(src, 0),
-            "stem_pct": round(src_stem.get(src, 0) / src_n, 4) if src_n else 0.0,
-            "high_difficulty_docs": src_high_diff.get(src, 0),
-            "high_difficulty_pct": round(src_high_diff.get(src, 0) / src_n, 4) if src_n else 0.0,
-            "parse_failed_docs": src_parse_failed.get(src, 0),
-            "parse_failed_pct": round(src_parse_failed.get(src, 0) / src_n, 4) if src_n else 0.0,
-            "fdc_top_distribution": src_fdc_dist,
-            "reasoning_depth_distribution": dict(sorted(src_rd.get(src, Counter()).items())),
-            "educational_level_distribution": dict(sorted(src_edu.get(src, Counter()).items())),
         }
 
     summary = {
@@ -522,7 +386,6 @@ def compute_stem(
         "fdc_top_distribution": fdc_top_distribution,
         "reasoning_depth_distribution": dict(sorted(reasoning_counter.items())),
         "educational_level_distribution": dict(sorted(edu_counter.items())),
-        "source_breakdown": source_breakdown,
         "model_path": model_path,
         "device": device,
         "batch_size": batch_size,

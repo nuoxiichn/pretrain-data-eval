@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# Stage 5 — exact 污染检测跑批（12 个与实际评测清单对齐的 benchmark）
-# 输出到 $DATASET（数据集标签见下）
-#
-# 用法: bash scripts/contamination_batch.sh en|zh
+# Stage 5 污染检测 全量逐文件扫描，支持断点续跑
+# 用法: bash scripts/contamination_batch.sh en|zh [config_yaml]
+#   默认使用 configs/stage5_mmlu.yaml（仅 MMLU）
 set -uo pipefail
 
-LANG=${1:?用法: contamination_batch.sh en|zh}
+LANG=${1:?用法: contamination_batch.sh en|zh [config_yaml]}
+CONFIG=${2:-configs/stage5_mmlu.yaml}
 
 CODE=/mnt/public/code/chennuoxi/pretrain-data-eval
 cd "$CODE"
-
-CONFIG=configs/stage5.yaml
 
 case "$LANG" in
   en)
