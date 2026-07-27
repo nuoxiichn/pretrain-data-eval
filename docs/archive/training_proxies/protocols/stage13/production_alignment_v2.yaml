@@ -1,0 +1,181 @@
+version: production_alignment_v2
+status: active
+purpose: >-
+  Validate whether training-based data-quality proxy rankings transfer from transparent
+  public model families to production-aligned dense and MoE model families.
+approved_capability_scope: [knowledge, code, math]
+deferred_capability_scope: [long_context]
+data_representation:
+  qwen_tokenizer_alignment_required: true
+  current_local_assets: olmo_tokenized_uint16_streams
+  raw_text_or_retokenization_gate: true
+  fallback_label_without_raw_text: architecture_only
+
+current_baseline:
+  transparent_family_results:
+    - datadecide
+    - pythia
+    - olmo
+  preserve_status:
+    mmlu-cf: early_screen_only
+    mmlu-pro: needs_larger_target
+    gpqa-diamond: needs_larger_target
+    mmmlu-zh: needs_larger_target
+  production_claim: not_validated
+
+protocol:
+  primary_training_budget: fixed_tokens
+  sensitivity_training_budget: fixed_tokens_per_parameter
+  fixed_tokens_per_parameter_range: [20, 30]
+  training_horizons:
+    fixed_tokens: [300000000, 1000000000, 3000000000]
+    tokens_per_parameter: [1, 5, 20]
+  execution_screen_tokens: 100000000
+  optional_tokens_per_parameter: [30]
+  wall_clock_budget_hours: 72
+  intermediate_checkpoints: true
+  horizon_stop_rule: >-
+    Do not continue to 20-30 tokens per parameter when both 1x and 5x horizons
+    show no target resolution, systematic reversal, or failed runtime integrity.
+  seeds:
+    pilot: [42]
+    confirmatory: [42, 123, 456]
+  candidate_recipe_count:
+    pilot: 8
+    confirmatory: 8
+  minimum_recipe_families: 3
+  no_posthoc_metric_selection: true
+  heldout_family_required: true
+  cluster_bootstrap_by_recipe_family: true
+  required_artifacts:
+    - run_manifest.json
+    - config.resolved.yaml
+    - stdout.log
+    - stderr.log
+    - train_metrics.jsonl
+    - checkpoint_index.json
+    - evaluator_summary.json
+    - conclusion.json
+
+model_families:
+  qwen3_like_from_scratch:
+    status: approved
+    architecture_source: Qwen3-compatible-public-config
+    tokenizer_source: Qwen3-base-tokenizer
+    sizes:
+      pilot: [0.6B, 1.7B]
+      confirmatory: [4B]
+    training_mode: from_scratch
+  qwen_base_cpt:
+    status: approved
+    model_ids: [Qwen/Qwen3-1.7B-Base, Qwen/Qwen3-4B-Base]
+    sizes:
+      pilot: [1.7B, 4B]
+      confirmatory: [8B]
+    training_mode: continued_pretraining
+    tokens:
+      pilot: [1000000000, 5000000000]
+  qwen35_modern_hybrid_audit:
+    status: optional_after_forward_loss_smoke
+    model_ids: [Qwen/Qwen3.5-4B-Base]
+    training_mode: text_only_continued_pretraining
+    merge_with_qwen3_dense_results: false
+    freeze_vision_tower: true
+    35B_inference_only: true
+  production_internal:
+    status: optional_pending_internal_artifacts
+    model_ids: []
+    training_mode: evaluation_or_short_cpt
+  moe_like:
+    status: deferred_until_dense_pilot_passes
+    architecture_source: DeepSeekMoE-compatible-public-implementation
+    sizes:
+      pilot: [1B, 3B]
+    training_mode: from_scratch
+
+recipe_selection:
+  source: DataDecide
+  pilot_count: 8
+  minimum_families: 3
+  selection_rule: pre_registered_quality_spread_and_family_coverage
+  freeze_before_training: true
+  pilot_recipe_ids:
+    - falcon_raw
+    - falcon_qc20
+    - falcon_orig10
+    - dclm_raw
+    - dclm_fw2
+    - dclm_fw3
+    - dolma_raw
+    - dolma_no_flan
+  rationale:
+    - falcon family contains a stable filtering edge and a near-crossover edge
+    - dclm family contains a stable edge and a documented crossover control
+    - dolma family supplies a source ablation and a third recipe family
+
+benchmark_tracks:
+  knowledge:
+    registered: [mmlu-cf, mmlu-pro, mmmlu, gpqa-diamond]
+  code:
+    registered: [evalplus, livecodebench]
+  math:
+    registered: [math, math-500, gsm1k, gsm-plus, mgsm]
+  long_context:
+    source: benchmark_registry
+    selection: production_relevant_and_low_contamination
+    status: deferred_out_of_current_scope
+  external_alignment_only:
+    - gpt_api
+    - claude_api
+    - kimi_api
+  api_ground_truth_for_recipe_quality: false
+
+gates:
+  pilot:
+    minimum_decisive_pairs: 20
+    pairwise_direction_accuracy: 0.80
+    bootstrap_lower_bound: 0.65
+    minimum_coverage: 0.50
+  production_aligned:
+    heldout_family_accuracy: 0.65
+    pairwise_direction_accuracy: 0.80
+    minimum_coverage: 0.50
+    forbid_systematic_crossover: true
+
+manual_dependencies:
+  internal_checkpoints: optional_for_current_phases
+  qwen_model_choice: approved_qwen3_1p7b_and_4b
+  api_credentials_and_budget: not_provided_external_alignment_deferred
+  extra_gpu_hosts: optional_not_required_for_pilot
+  data_access_and_export_policy: approved_local_training_logs_and_checkpoints
+  raw_recipe_text_or_retokenization_authorization: approved_olmo_decode_qwen_retokenize; raw_text_not_available
+  gpu_hour_budget: approved_72_wall_clock_hours
+
+execution:
+  phase_order:
+    - phase0_protocol_freeze
+    - phase1_qwen3_like_pilot
+    - phase2_qwen_base_cpt
+    - phase3_internal_production_checkpoint
+    - phase4_moe_like_pilot
+    - phase5_leave_one_family_out
+  parallel_groups:
+    phase1:
+      - qwen_size
+      - recipe
+      - benchmark_track
+    phase2:
+      - recipe
+      - benchmark_track
+    phase4:
+      - recipe
+  serial_gates:
+    - phase0_before_phase1
+    - phase1_pilot_gate_before_phase1_confirmatory
+    - phase1_before_phase2
+    - phase1_and_phase2_before_phase4
+    - all_target_artifacts_before_phase5
+  default_gpu_partition: "4 train + 2 eval + 2 reserve"
+  resume_policy: checkpoint_and_unit_manifest
+  corrupt_artifact_policy: delete_and_restart_run
+  evaluator_failure_policy: rerun_failed_unit_only

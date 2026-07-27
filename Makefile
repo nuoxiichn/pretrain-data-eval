@@ -6,8 +6,8 @@ test:
 	python -m pytest -q
 
 lint:
-	ruff check pretrain_data_eval stages tests
-	python -m compileall -q pretrain_data_eval stages scripts tests
+	ruff check pretrain_data_eval research stages tests
+	python -m compileall -q pretrain_data_eval research stages scripts tests
 	bash -n scripts/*.sh scripts/archive/*.sh
 	git diff --check
 

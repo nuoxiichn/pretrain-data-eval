@@ -20,13 +20,13 @@ tokenization 等维度输出可追踪的信号，帮助团队判断一批数据�
 | 8 | 代码可解析性、STEM 学科与难度 | tree-sitter、EAI-Distill | 按数据类型选用并抽样 |
 | 9 | 长上下文训练配置 | Megatron 参数审计 | 不读取语料，秒级 |
 | 10 | fertility、UNK、代码/LaTeX 膨胀 | HF tokenizer | 可与 Stage 1 合并扫描 |
-| 11 | 微型训练代理（已退役） | Anchor、Balanced、data-conditioning | 三种方法均为 Production No-Go；不得调度或消费输出 |
 
 Stage 编号沿用项目早期实验编号，因此没有 Stage 6。被否决的通用质量评分实验保存在
 [归档](docs/archive/quality_metric_rejection.md)，不属于当前能力。
 
-完整指标、输出字段、适用边界和依赖见[指标目录](docs/guide/metrics.md)。Stage 11 三种方法的实验、
-失败控制和最终退役决定见[统一终局报告](docs/reports/stage11_final_report.md)。
+完整指标、输出字段、适用边界和依赖见[指标目录](docs/guide/metrics.md)。Stage 11-13 训练代理的
+最终决定和冻结协议位于[训练代理归档](docs/archive/training_proxies/README.md)，不属于当前能力。
+尚未通过晋级门的方法只允许放在 [`research/`](research/README.md)。
 
 ## 选择评估项
 
@@ -34,10 +34,10 @@ Stage 编号沿用项目早期实验编号，因此没有 Stage 6。被否决的
 
 | 数据类型 | 必测 | 选测或限制 |
 |---|---|---|
-| 通用文本 | S1 stats、S2 safety、S3、S4、S5、S10 | S7 必须先校准；S8 parsability 不适用；S11 已退役 |
+| 通用文本 | S1 stats、S2 safety、S3、S4、S5、S10 | S7 必须先校准；S8 parsability 不适用 |
 | 代码 | S1 stats、S2 code-PII/secrets、S4、S5 code、S8 parsability、S10 | 自然语言质量规则只用于注释类内容 |
 | STEM/数学 | 通用文本项、S5、S8 stem、S10 | Gopher/C4 可能把公式密集文本误判为低质量 |
-| 多语言 | S1、S3 GlotLID/langcross、S4、S10 | 模型覆盖外不可外推；S11 已退役 |
+| 多语言 | S1、S3 GlotLID/langcross、S4、S10 | 模型覆盖外不可外推 |
 | 合成文本 | 通用文本项、生成元数据画像 | Binoculars 命中率不等于合成数据质量 |
 
 ## 快速开始
@@ -76,7 +76,7 @@ PYTHONPATH=. python stages/safety/run.py pii \
 | 多语言 tree-sitter | `python -m pip install -e '.[code]'` |
 | 远程 HuggingFace benchmark | `python -m pip install -e '.[benchmarks]'` |
 | ScanCode 许可证 | `python -m pip install -e '.[license]'` |
-| embedding、STEM、Binoculars、微型训练代理 | `python -m pip install -e '.[gpu]'` |
+| embedding、STEM、Binoculars | `python -m pip install -e '.[gpu]'` |
 | Qwen/vLLM Judge | `python -m pip install -e '.[gpu,judge]'` |
 
 DataTrove 分布式去重使用独立环境，见

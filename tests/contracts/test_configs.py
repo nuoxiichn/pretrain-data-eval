@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_all_public_stage_configs_are_valid_yaml_and_have_output():
-    expected = [1, 2, 3, 4, 5, 7, 8, 9, 10, 11]
+    expected = [1, 2, 3, 4, 5, 7, 8, 9, 10]
     for stage in expected:
         path = ROOT / "configs" / f"stage{stage}.yaml"
         config = yaml.safe_load(path.read_text(encoding="utf-8"))

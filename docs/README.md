@@ -11,7 +11,8 @@
 | 每项实验需要多少资源、可扩展到多大 | [性能与规模](guide/performance.md) |
 | 自动化测试保证什么、外部依赖如何验收 | [测试与验收](guide/testing.md) |
 | 公开数据在本链路上的结果 | [参考报告](reports/README.md) |
-| Stage 11 三种训练代理为何退役 | [Stage 11 最终实验与决策](reports/stage11_final_report.md) |
+| 当前方法处于 active、research 还是 retired | [方法注册表](method_registry.yaml) |
+| Stage 11-13 训练代理为何未进入当前能力 | [训练代理归档](archive/training_proxies/README.md) |
 
 各子命令的安装依赖和完整参数仍由 `stages/<name>/README.md` 维护。机器可校验契约位于
 [`schemas/`](../schemas/README.md)。

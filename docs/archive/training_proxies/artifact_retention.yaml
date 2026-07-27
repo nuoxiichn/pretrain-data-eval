@@ -1,0 +1,65 @@
+version: 1
+generated_at: "2026-07-27"
+git_revision: e102c036d0041c1f8448c4f91ea59d98e058c0fb
+destructive_cleanup_executed: false
+
+retention_policy:
+  keep:
+    - resolved configs and frozen protocol YAML
+    - run manifests and checkpoint hash indexes
+    - status, conclusion, and final summary JSON
+    - scalar training logs
+    - final Markdown reports
+  purge_after_separate_approval:
+    - model checkpoints and HF exports
+    - materialized token streams
+    - per-example benchmark predictions
+    - retryable smoke outputs superseded by final runs
+
+output_inventory:
+  stage11:
+    bytes: 210384258
+    paths:
+      - outputs/stage11
+      - outputs/stage11_anchor_calibration_v1
+      - outputs/stage11_balanced_validation_v1
+      - outputs/stage11_balanced_validation_v2_1
+      - outputs/stage11_conditioning_fixed_ratio
+      - outputs/stage11_conditioning_permutation
+      - outputs/stage11_conditioning_scale
+      - outputs/stage11_conditioning_threshold
+      - outputs/datadecide_official_conditioning
+  stage12:
+    bytes: 17006358192
+    paths:
+      - outputs/datadecide_reproduction
+      - outputs/datadecide_benchmark_proxy
+  stage13:
+    bytes: 164430166459
+    paths:
+      - outputs/production_alignment
+
+key_summaries:
+  - path: outputs/datadecide_reproduction/local_step2500_three_seed_crossscale/summary.json
+    sha256: 02ce8204ff6be73bd81a820f79780600cb15c716ff09cd64b395bca89b9d2f6d
+  - path: outputs/datadecide_reproduction/local_final_three_seed_crossscale/summary.json
+    sha256: c6d53ea5042167bf7bf5661f100ad956af89000cfd7fd8733dc1d0a2d700af5e
+  - path: outputs/datadecide_benchmark_proxy/analysis_proxy/summary.json
+    sha256: 4929a77364adaa4d806e9d7408bf82e7f3afad48f09880c1d89d4f5efd907b3d
+  - path: outputs/production_alignment/screen_100m_20260724/summary.json
+    sha256: 9983715b77313c38c07feff14d5b37acac59951fb6f7b483ae5dd5a8f78d3e17
+  - path: outputs/production_alignment/weekend_finalize_20260724/status.json
+    sha256: beaab08bb74c50b4116b429af4a008e43eceae29be7cefe34fe898f96132627f
+
+frozen_protocol_sha256:
+  stage11.yaml: 3bd575e05e934522b1c48a72ef46cf0ee1b3db54583822d457d9df383eb0f6f8
+  stage11_anchor_calibration_v1.yaml: a3908bba1388c75bfc5d5c1e092754c5ca46ba9834e3476e56b047b39b9b5476
+  stage11_conditioning_fineweb_threshold.yaml: 779c094b5809d98303bf87089eb34d033bb05064ec0c45f7b027e4661df7928f
+  stage11_conditioning_fixed_ratio.yaml: 4ea789be15e5a2a728fce110ec7c0161dbd7fdffb1dce76f3ed333fc772780e9
+  stage11_conditioning_scale.yaml: 57c260cb61507d9b605164005352c78868dfb9387bada9d07170a6ad3753142d
+  stage11_datadecide_official.yaml: fbd6618194037e7c5636c449e6fc8211ff1a1abc62dbe237524e1219f3a36730
+  stage12_datadecide.yaml: 282e1f9d814d6432ecc102c5ea4ea770280d408dae11e1613650743fd26a4659
+  stage12_benchmark_validation.yaml: b6f189142ffa8802301eebf97117c47a76aa17371573c838cd96e3f59113b2eb
+  benchmark_registry.yaml: 29b91ddf9c6c0f895ec4b30495db35cc4d09366ddf29f3047af70ddc3643ac89
+  stage13_production_alignment.yaml: 884d995a45422a7a7d91f13de7412f8bca2b862edb5bcb11364296828f47c2cc
+  production_alignment_v2.yaml: 68e27f001ed7716271d2bc725a2370f9b1ff1d083ed8bed445577ab8107399d2

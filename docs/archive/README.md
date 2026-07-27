@@ -6,6 +6,7 @@
 当前归档：
 
 - [通用质量评分否决实验](quality_metric_rejection.md)
+- [Stage 11-13 训练代理实验](training_proxies/README.md)
 - [污染检测研究综述](contamination_research.md)
 - [级联污染检测实施过程](contamination_cascade_design.md)
 

@@ -1,0 +1,17 @@
+# Canonical Stage 13 entry point. Detailed protocol is kept in
+# configs/production_alignment_v2.yaml so the draft can be reviewed without
+# changing the Stage 12 DataDecide contract.
+stage: 13
+name: production_alignment
+status: active
+plan: configs/production_alignment_v2.yaml
+docs:
+  guide: docs/guide/production_alignment_plan_v2.md
+  report: docs/reports/production_alignment_report.md
+execution:
+  training_enabled: true
+  require_manual_confirmation: false
+  require_phase0_freeze: true
+  output_root: outputs/production_alignment
+  resume_policy: checkpoint_and_unit_manifest
+  default_gpu_partition: "4 train + 2 eval + 2 reserve"

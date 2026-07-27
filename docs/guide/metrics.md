@@ -69,18 +69,11 @@ LLM Judge 复审。
 输出 token/char fertility、UNK、代码块和 LaTeX 块的 token 膨胀。所有结果只对指定 tokenizer
 成立；不同 script 的字符单位不可简单解释为语言质量。生产建议与 Stage 1 合并扫描。
 
-## Stage 11：微型训练代理
-
-Stage 11 已退役。Anchor-relative、Balanced-pool scaling gain 和 data-conditioning 均未通过生产或
-辅助决策校准，生产编排不得调用 `probe`，汇总不得消费其边或逐文档分数。实现、冻结配置、数据
-和输出仅为历史实验复核保留。
-
-失败不只是统计效力不足：重复、模板和截断存在反向或无响应，cross-corpus loss 主要识别分布
-专化，而最稳定的严重词序控制缺少真实生产应用场景。完整协议、数值和停止决定见
-[Stage 11 最终实验与决策](../reports/stage11_final_report.md)。
-
 ## 不提供的结论
 
 当前链路不提供跨维度综合分、生产规模模型或下游 benchmark 收益预测、法律合规意见、凭据
 有效性验证，也不声称
 一次抽样能够证明整库“安全”或“无污染”。
+
+已退役或证据不足的训练代理不属于当前指标，历史结论和冻结协议见
+[Stage 11-13 训练代理归档](../archive/training_proxies/README.md)。

@@ -32,9 +32,6 @@ DataTrove 分布式 shuffle 或 TB 级资源上限。
    `per_doc.jsonl` / `summary.json` schema；
 8. 100K 以上规模记录 wall time、峰值内存/显存和产物大小，再决定生产并发。
 
-Stage 11 已完成否决性验证并退役，不属于目标环境生产验收项。其历史实验只在复核终局报告时按
-冻结协议运行，不能因更换 tokenizer、模型配置或设备重新解释为生产校准。
-
 任何真实模型、prompt、tokenizer、grammar、Gitleaks 或 DataTrove 版本变化都应重跑对应验收，
 不能只依赖 Python 单元测试。
 

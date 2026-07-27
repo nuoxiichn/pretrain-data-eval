@@ -1,6 +1,6 @@
 # DataDecide 小模型排序复现实验报告
 
-状态：实验完成（2026-07-21）。
+状态：实验完成（2026-07-23）。
 
 ## 1. 结论边界
 
@@ -12,12 +12,14 @@ benchmark 分数解释为数据的“总体质量”，也不替代污染、隐�
 [OLMES](https://arxiv.org/abs/2406.08446)。官方还公开了
 [模型集合](https://huggingface.co/collections/allenai/datadecide-67edb1d2bacba40b5d3ed633)、
 [数据 recipe](https://huggingface.co/datasets/allenai/DataDecide-data-recipes)和
-[逐任务结果矩阵](https://huggingface.co/datasets/allenai/DataDecide-eval-results)。本报告把证据分为四层：
+[逐任务结果矩阵](https://huggingface.co/datasets/allenai/DataDecide-eval-results)。本报告把证据分为五层：
 
 1. 重算官方结果矩阵，只验证统计口径，不算本地复现；
 2. 用固定 OLMES commit 本地复评官方 20M 权重，验证 evaluator 和指标重建；
 3. 本地物化 recipe、重新训练 20M 模型并评测，验证代理端不依赖官方训练结果；
-4. 本地复评官方 1B 权重，验证目标端排序不只来自官方矩阵。
+4. 本地复评官方 1B 权重，验证目标端排序不只来自官方矩阵；
+5. 对全 25-recipe 扩展 MMLU-Pro、GPQA-Diamond、MMMLU-ZH 和 MMLU-CF，验证新增 benchmark
+   自己是否可由小模型代理。
 
 ## 2. 论文方法与本次口径
 
@@ -258,7 +260,87 @@ crossover：本地 OLMES-10 在 20M 是 FW3 高 `0.476pp`，到 1B 却变成 raw
 HellaSwag 则是 `.646/.525`，强烈支持 raw。两种汇总在回答不同能力目标，均与各自的小模型代理
 一致，但 OLMES-10 的跨任务权衡随规模翻转。
 
-## 8. 成本与周期
+## 8. 能力 benchmark 扩展复评
+
+### 8.1 实验范围与 target 先行门
+
+为验证注册名单中的其他能力任务是否也能由小模型代理，本轮固定
+`rc-zero-shot-v1` base-model 协议，复评 [DataDecide](https://arxiv.org/abs/2504.11393) 全部
+25 个公开 recipe。模型规模为 20M、60M、150M 和 1B，训练预算沿用固定约
+100 token/parameter；所有 scale 使用同一题面、选项顺序、答案前缀和字符归一化评分。实验设计和
+停止规则见[冻结实验协议](stage12_benchmark_proxy_protocol.md)，机器可读配置见
+[`stage12_benchmark_validation.yaml`](protocols/stage12/stage12_benchmark_validation.yaml)。
+
+第一步只运行 1B target。公开 checkpoint 只有 default 训练 seed，因此 bootstrap 和 FDR 只估计
+benchmark 题目抽样不确定性，不估计训练 seed 方差。结果位于
+`outputs/datadecide_benchmark_proxy/analysis_1b/summary.json`。
+
+| 1B target | 平均 accuracy | 随机线 | 归一化提升 | 原始/FDR 明确 pair | 裁决 |
+|---|---:|---:|---:|---:|---|
+| MMLU-Pro | 10.55% | 11.25% | -0.79% | 235/218 | `needs_larger_target` |
+| GPQA-Diamond | 21.15% | 25.00% | -5.14% | 14/0 | `needs_larger_target` |
+| MMMLU-ZH | 26.76% | 25.00% | 2.34% | 27/0 | `needs_larger_target` |
+| MMLU-CF | 32.07% | 25.00% | 9.43% | 204/176 | `screenable_single_seed` |
+
+MMLU-Pro 是本轮最重要的反例：1B 虽在 FDR 后稳定区分 218 个 recipe pair，平均表现却低于按实际
+选项数计算的随机线。它更可能在测稳定的答案文本或选项偏好，而不是“模型会做 MMLU-Pro”；若只看
+显著 pair 数，会错误批准这个 benchmark。GPQA 同样低于随机；MMMLU 当前只测 ZH_CN，归一化提升
+只有 2.34%，且 FDR 后没有明确 pair。三者均应升级 target，而不是评价 proxy 成败，也不能用本轮
+结果代表 GPQA 更大子集或 MMMLU 其他语言。
+
+### 8.2 MMLU-CF 跨尺度结果
+
+只有 MMLU-CF 进入 20M/60M/150M。完整联合结果位于
+`outputs/datadecide_benchmark_proxy/analysis_proxy/summary.json`。下表每格为
+`Kendall tau-b；原始明确 pair accuracy / FDR 明确 pair accuracy`，分母分别为 204 和 176；四个
+预注册指标全部展示。
+
+| Proxy 指标 | 20M | 60M | 150M |
+|---|---:|---:|---:|
+| accuracy | .580；86.27% / 89.77% | .447；80.88% / 82.39% | .747；96.57% / 98.30% |
+| correct prob/char | .720；95.59% / 97.16% | .747；95.10% / 97.16% | .767；96.57% / 97.73% |
+| correct-vs-best-incorrect margin | .720；92.16% / 92.61% | .393；78.43% / 81.82% | .600；90.20% / 93.75% |
+| normalized choice probability | .700；94.61% / 96.59% | .600；90.20% / 92.61% | .780；98.04% / 98.86% |
+
+20M `correct_prob_per_char` 已达到 171/176，且是 DataDecide 既有的预指定 continuous 指标，因此
+本轮把它保留为**最小早期筛选档**。60M 没有提高其 FDR 命中率；150M 的 normalized choice
+probability 最好，但这是在同一 target 上比较四项后看到的结果，不能据此事后替换生产指标。它应
+作为 held-out family 实验的候选，而不是本轮“冠军”。离散 accuracy 在 60M 反而低于 20M，margin
+也明显非单调，说明“扩大 proxy 就必然更可靠”不成立。
+
+20M correct-prob 的 5 个 FDR 错误 pair，proxy 绝对 margin 都不超过 0.00647。事后用 0.0065
+阈值弃权可保留 159/176 pair 并达到 159/159；60M 同一阈值为 161/176、161/161。这是有价值的
+阈值候选，但阈值来自当前矩阵，不能作为有效性证据，必须在新的 recipe family 上冻结验证。
+`dclm-baseline` 对 `falcon-and-cc-qc-20p` 的 correct-prob 方向在 20M、60M、150M 都与 1B 相反，
+证明即使总体命中率很高，仍存在扩大到 150M 也不能修复的系统性 pair。
+
+因此正式状态为：MMLU-CF + 20M correct-prob 是 `early_screen_only`，不是 `validated_proxy`。
+升级仍缺三个训练 seed、按 recipe family 的 held-out 确认、预先冻结的 margin/弃权规则，以及至少
+8 个与团队“通用知识”生产变化匹配的专项 recipe。代码、数学和长程数据仍需各自 benchmark；本轮
+不能替它们背书。
+
+### 8.3 周期、完整性事故与修复
+
+仅看已经缓存权重后的 MMLU-CF evaluator，单模型平均用时为 20M `21.5s`、60M `21.7s`、150M
+`22.4s`、1B `43.2s`。评测只快约两倍，不应冒充训练周期收益；真正的节省来自固定
+token/parameter 时训练计算量约按参数量平方增长。按名义 scale，20M/60M/150M 约为 1B 训练
+FLOPs 的 `0.04%/0.36%/2.25%`。公开权重首次下载的 123GiB 缓存是本次复评成本，不是生产代理
+每批数据都要重复支付的成本。
+
+下载阶段曾启用 `HF_HUB_ENABLE_HF_TRANSFER=1`。镜像返回 `no permits available` 后，并行 partial
+不能作为连续前缀被普通 HTTP 正确续传，产生了**尺寸正确但内容损坏**的 safetensors。以
+`dclm-baseline-50p-dolma1.7-50p-1B` 为例，Hub blob ID 应为
+`12e19d94388b6e2095a78efc2b48593b87923cbb86cec538062f4c67ca5e3809`，损坏文件实际 SHA-256 前缀为
+`891f4d...`；模型仍能加载，却把 MMLU-Pro correct-prob/char 从健康值约 `.428` 降到 `.056`，并把
+GPQA accuracy 异常抬到 28.79%。这类错误若只检查文件尺寸或“能否加载”会静默污染结论。
+
+实现现已在直接 evaluator 和矩阵调度器中都禁用 `hf_transfer`，单模型下载固定
+`max_workers=1`，并在加载前把每个 safetensors 实际 SHA-256 与 64 位 Hub LFS blob ID 比较；不符
+时删除 blob、普通 HTTP 重下并再次校验。所有 175 份最终 summary 均记录
+`model_blob_sha256`，四个 manifest 的最终失败列表为空。首次下载仍可能遇到 503 或断流，但只影响
+周期，不再允许损坏权重进入结果。
+
+## 9. 成本与周期
 
 单个本地 proxy 使用 19,101,888 个论文口径参数和 1,911,554,048 token；官方 1B target 使用
 1,176,832,000 个论文口径参数和 100,015,669,248 token。按论文共同的 `6ND` 近似，单 recipe
@@ -292,9 +374,9 @@ MXC500-64G 上，九条训练轨迹到 step 2,500 的平均 wall time 为约 `2,
 加上本地每个候选 48 分钟或 3.54 小时的实测，已经满足“反馈周期显著短于 full target training”
 的工程目标。公开 1B target 的本地 evaluator 只验证结果端，不应与昂贵的 target 训练混为一谈。
 
-## 9. 最终判断、漏洞与生产建议
+## 10. 最终判断、漏洞与生产建议
 
-### 9.1 方法去留
+### 10.1 方法去留
 
 - **保留 20M continuous ARC/MMLU 类代理**：官方全 25-recipe 历史回测在 20M 已有
   `86.3%-90.0%` decision accuracy，本地 step-2,500 和公开 20M checkpoint 复评也显示它比
@@ -307,6 +389,9 @@ MXC500-64G 上，九条训练轨迹到 step 2,500 的平均 wall time 为约 `2,
 - **排除 BoolQ continuous**：官方 20M/60M/150M 都接近随机方向，不值得继续消耗本地算力。
 - **HellaSwag 单独校准**：它在 20M 的全矩阵方向性弱于 ARC/MMLU，且 Falcon、DCLM 都展示了与
   知识任务不同的数据偏好；需要更大 proxy 或更多 token，不能混入三任务均值后掩盖。
+- **MMLU-CF 保留为 20M early screen**：全 25-recipe 本地复评中，20M correct-prob 对 1B 的
+  FDR 明确 pair 命中 97.16%，但公开权重只有单训练 seed，且没有 held-out 生产 family，因此不能
+  标为 `validated_proxy`。MMLU-Pro、GPQA-Diamond 和 MMMLU-ZH 在当前 1B target 上停止。
 
 本地复现对 DataDecide 核心命题给出**有限但明确的支持**：从代表性 Falcon recipe 重新物化数据、
 训练九个 20M 模型后，小模型 continuous 排序在两个训练预算、三个 seed 和四个分任务上均预测了
@@ -318,7 +403,7 @@ recipe 产生有参考价值的方向，方法值得保留。
 所以最终上线形式应是**按能力校准的、小模型 continuous 排序器 + 弃权/升级机制**，而不是统一的
 数据质量分，更不能替代一次性的 target-scale 历史校准。
 
-### 9.2 建议的生产协议
+### 10.2 建议的生产协议
 
 1. **先写能力契约，再选 benchmark。** 通用知识数据可用 ARC/MMLU 类 held-out 任务；代码数据用
    代码生成、补全和测试通过率任务；长程数据用长上下文检索、跨段推理和持续一致性任务。三类数据
@@ -343,7 +428,7 @@ recipe 产生有参考价值的方向，方法值得保留。
    输出 `abstain`；升级到 60M/150M，或在高价值决策上补一个 target-scale anchor。许可、隐私、
    污染、安全和覆盖率仍由现有数据本体链路一票否决，proxy 高分不能覆盖这些问题。
 
-### 9.3 主要漏洞
+### 10.3 主要漏洞
 
 - **选组偏差**：8 个 recipe 是在阅读官方矩阵后预注册的诊断子集；子集 28/28 不能替代全矩阵
   300 pair 的历史准确率。最终是否上线应以团队自己的历史 recipe 矩阵重新校准。
@@ -359,10 +444,12 @@ recipe 产生有参考价值的方向，方法值得保留。
   seed 只能估计训练噪声，不能消除模型规模与数据相互作用；生产输出必须承认这一不可识别区间。
 - **能力覆盖有限**：ARC/MMLU/HellaSwag 不覆盖代码、数学证明、多语言、长上下文、事实时效和
   生成质量。本报告不能为这些数据类型背书，需要分别建立 benchmark 与跨尺度校准。
+- **新增矩阵仍是单训练 seed**：MMLU-CF 的题目 bootstrap 和 FDR 不能替代训练 seed 方差；当前
+  97.16% 只能用于候选筛选。MMLU-Pro 还证明“显著区分 recipe”与“模型具备该能力”并不等价。
 
-## 10. 复现入口与测试
+## 11. 复现入口与测试
 
-主要命令见 `stages/datadecide/README.md`。关键输出：
+原实验 CLI 已随方法退役，不再提供可执行入口。保留的关键输出：
 
 - 官方论文口径回算：`outputs/datadecide_reproduction/official_matrix_paper_protocol/summary.json`；
 - 官方 20M 本地复评：`outputs/datadecide_reproduction/published_20m/`；
@@ -372,9 +459,11 @@ recipe 产生有参考价值的方向，方法值得保留。
 - 本地三 seed 早停：`outputs/datadecide_reproduction/local_step2500_three_seed_crossscale/summary.json`；
 - 本地三 seed 完整 20M：`outputs/datadecide_reproduction/local_final_three_seed_crossscale/summary.json`；
 - DCLM 本地 crossover：`outputs/datadecide_reproduction/published_dclm_crossscale/summary.json`。
+- 新增 benchmark 的 1B target 审计：`outputs/datadecide_benchmark_proxy/analysis_1b/summary.json`；
+- MMLU-CF 三档 proxy 联合结果：`outputs/datadecide_benchmark_proxy/analysis_proxy/summary.json`。
 
-最终验证：`pytest -q` 为 `59 passed`；本次新增范围的 `ruff check` 与 `ruff format --check`
-通过；`compileall` 通过。全仓 ruff 仍报告整理工作区已有的 8 个 lint 和 47 个格式问题，均不在
+最终验证：`pytest -q` 为 `73 passed`；本次新增范围的 `ruff check` 与 `ruff format --check`
+通过；`compileall` 通过。全仓 ruff 仍报告整理工作区已有的 8 个 lint 和 43 个格式问题，均不在
 Stage 12；为避免覆盖另一位 agent 的整理变更，本任务没有顺手改写这些文件。
 
 原始 benchmark predictions 可能包含评测题面，只保存在 git-ignored `outputs/`，报告和提交中不嵌入。
