@@ -93,7 +93,7 @@ Anchor-relative gain 只能描述“相对于指定 Anchor 的结构兼容性和
 
 - `data/trainability/anchor_calibration_v1/`
 - `outputs/stage11_anchor_calibration_v1/`
-- `configs/stage11_anchor_calibration_v1.yaml`
+- 冻结配置：[`protocols/stage11/stage11_anchor_calibration_v1.yaml`](protocols/stage11/stage11_anchor_calibration_v1.yaml)
 
 首次模板控制曾造成 normalized exact text 跨 split；失败数据和运行保留在两个
 `failed_exact_split_overlap/` 目录，修复后所有正式实验已重跑。
@@ -188,8 +188,8 @@ Data-conditioning 不进入生产质量排名，也不再保留为辅助覆盖�
 - `outputs/stage11_conditioning_threshold/`
 - `outputs/stage11_conditioning_fixed_ratio/`
 - `outputs/datadecide_official_conditioning/combined_summary.json`
-- `configs/stage11_conditioning_*.yaml`
-- `configs/stage11_datadecide_official.yaml`
+- 冻结配置目录：[`protocols/stage11/`](protocols/stage11/)，其中保留
+  `stage11_conditioning_*.yaml` 和 `stage11_datadecide_official.yaml`
 
 ## 5. 生产边界与保留策略
 

@@ -1,16 +1,23 @@
-# Production-aligned training proxy validation plan v2
+# 已归档：Production-aligned training proxy validation plan v2
 
-版本：`v2.0-active`
+原协议版本：`v2.0-active`
+
+归档状态：**Closed after Stage 1 screen / no promotion**
 
 日期：2026-07-24
+
+> 归档说明：本文保留实验启动时的冻结计划和未来时措辞。实际执行完成了 Stage 1
+> 的 8/8 个 0.6B、100M-token run 及冻结知识评测，但未通过预注册迁移门；Stage 2
+> 因 gate 取消，Stage 3-5 未启动。最终状态和统计以
+> [Stage 13 生产对齐训练 proxy 报告](stage13_qwen_screen_report.md)为准。
 
 本计划是在 DataDecide/OLMo/Pythia 公开模型实验基础上，验证训练型数据质量 proxy 是否能迁移到生产中对齐的 Qwen、DeepSeek、Kimi、GPT、Claude 等模型家族。它不把公开老模型上的成功直接解释为生产有效。
 
 本轮执行授权已于 2026-07-24 冻结：允许 Qwen3-like 0.6B/1.7B/4B、Qwen3 Base continued pretraining、本地数据落盘和重分词、训练日志与中间 checkpoint；72 小时是本轮训练墙钟上限；当前没有内部 production checkpoint；能力范围暂限通用知识、代码和数学；GPT/Claude/Kimi API 暂不启动（没有 endpoint、凭据和费用上限）。
 
-## 1. 当前证据和本计划的目标
+## 1. 协议冻结时的证据和目标
 
-当前实验已经证明：在透明的 DataDecide、OLMo、Pythia 类 base-model 家族中，部分 benchmark 可以对数据配方产生排序信号；MMLU-CF + 20M `correct_prob_per_char` 目前只能标记为 `early_screen_only`。MMLU-Pro、GPQA-Diamond、MMMLU-ZH 的 1B target 仍是 `needs_larger_target`。
+协议冻结时的实验已经证明：在透明的 DataDecide、OLMo、Pythia 类 base-model 家族中，部分 benchmark 可以对数据配方产生排序信号；MMLU-CF + 20M `correct_prob_per_char` 目前只能标记为 `early_screen_only`。MMLU-Pro、GPQA-Diamond、MMMLU-ZH 的 1B target 仍是 `needs_larger_target`。
 
 这不等于已经证明 proxy 能预测生产模型。生产模型可能有不同 tokenizer、dense/MoE 架构、训练规模、数据混合和 SFT/RL 后训练。因此本计划的目标是依次验证：
 
@@ -60,7 +67,7 @@
 
 执行记录（2026-07-24）：契约测试 24 项通过；两卡 all-reduce、tiny Qwen3 FSDP forward/backward、DCP checkpoint save/resume 均通过，恢复后参数 checksum 差异为 0。Qwen3 1.7B/4B/8B Base 的 config、tokenizer、safetensors header 和离线 meta-loadability 检查通过。一个 0.6B Qwen3-like 两卡 trainer smoke 已完成 8 步/2,048 token，loss 从 12.11 降到 10.62，checkpoint、RNG 和训练 manifest 均落盘。
 
-阶段 0 仍有一个未关闭的数据表示 gate：现有 DataDecide 主资产是 OLMo tokenizer 的 headerless uint16 stream，不是 raw text。重分词脚本已实现并正在生成 Qwen tokenizer 的 uint32 stream；在重分词完成前，训练结果只能标为 `architecture_only_olmo_ids`，不能标为 `production_aligned`。
+阶段 0 预检时仍有一个未关闭的数据表示 gate：现有 DataDecide 主资产是 OLMo tokenizer 的 headerless uint16 stream，不是 raw text。后续已完成到 Qwen tokenizer uint32 stream 的可审计转换并用于 Stage 1，但 OLMo decode 再重编码仍不等价于 raw text，因此最终结果仍不能标为 `production_aligned`。
 
 此外必须先做三项极小运行时 smoke：两卡 all-reduce、两卡 Qwen3 config FSDP forward/backward、checkpoint save/resume。任何一项失败都先修运行时或缩小并行配置，不启动 8 个 recipe 的正式训练。
 
@@ -237,9 +244,9 @@ pilot gate：
 8. **生产 benchmark**：确认哪些注册表 benchmark 是真实验收目标，哪些只能作为 proxy 或污染高风险对照。
 9. **数学和代码评测许可**：确认 MATH、GSM8K、EvalPlus、LiveCodeBench 等数据的本地缓存和生成式评测方式。
 
-## 7. 建议的人工回复格式
+## 7. 实验启动时建议的人工回复格式
 
-在新对话开始时，建议直接提供：
+在当时的新对话开始时，建议直接提供：
 
 ```text
 Qwen3-like 首批模型：0.6B / 1.7B / 4B（允许或不允许）
@@ -252,4 +259,4 @@ Qwen base continued pretraining：允许或不允许，最大 GPU 小时：...
 可接受的存储上限：...
 ```
 
-在这些事项确认前，本轮只固化计划、配置、审计和 smoke test，不启动大规模训练。
+以上为实验启动时的授权模板，不是当前待办事项。实际执行和停止点见本文顶部的归档说明和最终报告。

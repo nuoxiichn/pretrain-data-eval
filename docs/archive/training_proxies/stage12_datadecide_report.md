@@ -129,7 +129,11 @@ OpenBookQA 为 `-2.20pp`。团队若生产“通用知识”“代码”“长�
 
 ## 6. 本地数据与 20M 训练实现
 
-Stage 12 新增 `configs/stage12_datadecide.yaml` 和 `stages/datadecide/`：
+Stage 12 实验时新增了 `configs/stage12_datadecide.yaml` 和 `stages/datadecide/`。原 CLI
+现已退役，冻结配置移至
+[`protocols/stage12/stage12_datadecide.yaml`](protocols/stage12/stage12_datadecide.yaml)；通用的成对统计、
+选择题评测、token stream 和运行记录原语保留在
+[`research/data_advisor/`](../../../research/data_advisor/)。以下为已退役实现的历史记录：
 
 - `prepare.py` 从固定 OLMo `named_data_mixes.py` 解析官方 recipe，跨完整 shard 列表做确定性
   range 抽样；支持 TLS 重试、完整 part 复用、Content-Range 校验和原子落盘；

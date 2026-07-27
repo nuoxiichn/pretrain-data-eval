@@ -150,8 +150,8 @@ CI 中的模型指标使用可控 fake 验证切块、召回路由、聚合和 s
 fake 结果证明模型效力。DataTrove、Presidio、真实 tokenizer/embedding/Judge 和多语言 grammar
 需要在目标环境按[测试与验收](docs/guide/testing.md)执行外部验收。
 
-公开参考包括 UFW-L3 的完整画像、OpenWebText 对 Raw Common Crawl 的方向性对照、微型训练
-代理控制实验，以及 The Stack 代码样本的能力验证。它们证明实现可以发现预设类型的信号，不证明所有指标都有
+公开参考包括 UFW-L3 的完整画像、OpenWebText 对 Raw Common Crawl 的方向性对照，
+以及 The Stack 代码样本的能力验证。它们证明实现可以发现预设类型的信号，不证明所有指标都有
 足够 recall，也不能直接成为其他数据集的通用合格阈值。详见[公开报告](docs/reports/README.md)。
 
 开发检查：
