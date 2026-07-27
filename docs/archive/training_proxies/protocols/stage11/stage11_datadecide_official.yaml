@@ -1,0 +1,54 @@
+experiment:
+  name: datadecide_dclm_qc7_fw2_vs_fw3
+  endpoint: https://hf-mirror.com
+  precision: bf16
+  eod_token_id: 50279
+  vocab_size: 50280
+  validation_reserve_tokens: 8000000
+  max_validation_docs: 1024
+  max_eval_tokens_per_doc: 2048
+  eval_batch_size: 4
+  min_effect_bits: 0.01
+  bootstrap_samples: 2000
+  confidence: 0.95
+  bootstrap_seed: 20260720
+
+corpora:
+  fw2:
+    repo_id: allenai/DataDecide-data-recipes
+    repo_path: preprocessed/dclm/v0_rep32_ft7percentile_fw2/gpt-neox-olmo-dolma-v1_5/part-15-00011.npy
+    local_path: /mnt/public/data/DataDecide-data-recipes/preprocessed/dclm/v0_rep32_ft7percentile_fw2/gpt-neox-olmo-dolma-v1_5/part-15-00011.npy
+    sha256: 9de81aff4bd6b6efece98147f728cacb3798af55a2e5312e87c368ca7f016a35
+  fw3:
+    repo_id: allenai/DataDecide-data-recipes
+    repo_path: preprocessed/dclm/v0_rep32_ft7percentile_fw3/gpt-neox-olmo-dolma-v1_5/part-15-00003.npy
+    local_path: /mnt/public/data/DataDecide-data-recipes/preprocessed/dclm/v0_rep32_ft7percentile_fw3/gpt-neox-olmo-dolma-v1_5/part-15-00003.npy
+    sha256: cdc677cffd67bb946d1227de7e922b2f5e60a92bd9883ee713fb8e5d628cf6d2
+
+models:
+  root: /mnt/public/data/DataDecide-models
+  seeds: [default, small-aux-2, small-aux-3]
+  sources:
+    fw2:
+      repo_template: allenai/DataDecide-dclm-baseline-qc-7p-fw2-{scale}
+    fw3:
+      repo_template: allenai/DataDecide-dclm-baseline-qc-7p-fw3-{scale}
+  scales:
+    20M:
+      checkpoints: [3750, 7500, 11250, 14584]
+    60M:
+      checkpoints: [29042]
+    150M:
+      checkpoints: [38157]
+
+ground_truth:
+  source: DataDecide released OLMES 10-task macro average at 1B/100B tokens
+  winner: fw2
+  loser: fw3
+  data_names:
+    fw2: DCLM-Baseline (QC 7%, FW2)
+    fw3: DCLM-Baseline (QC 7%, FW3)
+  scores_percent:
+    default: {fw2: 58.979, fw3: 57.081, delta: 1.898}
+    large-aux-2: {fw2: 58.874, fw3: 56.966, delta: 1.908}
+    large-aux-3: {fw2: 59.013, fw3: 57.349, delta: 1.664}

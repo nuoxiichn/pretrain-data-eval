@@ -8,7 +8,6 @@ Provides two independent computation functions:
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 from collections import Counter
 from datetime import datetime
@@ -17,9 +16,9 @@ from urllib.parse import urlparse
 
 import numpy as np
 
-from src.reader import Document
-from src.schema import DocResult
-from src.tokenizer_loader import load_tokenizer
+from pretrain_data_eval.reader import Document
+from pretrain_data_eval.schema import DocResult
+from pretrain_data_eval.tokenizer_loader import load_tokenizer
 
 
 # ── Tokenizer ─────────────────────────────────────────────────────────────────

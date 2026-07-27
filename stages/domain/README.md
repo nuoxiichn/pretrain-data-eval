@@ -19,7 +19,9 @@
 **输出 scores**：`error_node_count, total_node_count, error_ratio`
 **输出 flags**：`has_error`（有 ERROR/MISSING 节点）
 
-当前支持语言：Python。扩展方法：安装对应 `tree-sitter-<lang>` 包，在 `utils.py::_get_parser()` 添加注册。
+注册语言包括 Python、JavaScript、TypeScript、Java、Go、C、C++、C#、Rust、Ruby 和 PHP。
+只有安装了对应 `tree-sitter-<lang>` grammar 的语言才可用；`--language auto` 会按文档
+`meta.lang` / `language` 选择 grammar，并把缺失 grammar 的记录标为 `unsupported_lang`。
 
 ## stem
 
@@ -64,7 +66,7 @@ huggingface-cli download EssentialAI/eai-distill-0.5b \
 
 ### GPU 依赖
 
-`torch` 在 `pyproject.toml` 的 `[project.optional-dependencies].gpu`。首次跑：
+`torch` 和 `transformers` 位于 `gpu` 附加依赖。首次跑：
 
 ```bash
 pip install -e .[gpu]
@@ -74,9 +76,10 @@ pip install -e .[gpu]
 
 ## 依赖
 
-- `tree-sitter>=0.21`、`tree-sitter-python>=0.21`（核心依赖）
-- `transformers>=4.40`（核心依赖）
-- `torch`（`.[gpu]` 可选依赖）
+```bash
+python -m pip install -e '.[code]'  # parsability 及全部已注册 grammar
+python -m pip install -e '.[gpu]'   # STEM 模型推理
+```
 
 ## 运行示例
 

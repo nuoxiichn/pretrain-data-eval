@@ -3,6 +3,11 @@ data/
 CLAUDE.md
 *.pyc
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.claude/settings.local.json
 .env
 *.egg-info/
 dist/

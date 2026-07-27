@@ -6,17 +6,14 @@
 
 ## 子命令
 
-| 子命令 | 对应行 | 工具 | 说明 |
-|--------|--------|------|------|
-| `extraction` | 行 1 | 自实现（regex + 词表） | 抽取质量审计：检测已清洗文本里的 HTML/markup/boilerplate/mojibake 残留 |
-| `langid` | 行 2 | fastText lid.176 | 176 种语言识别（粗）；语种标签 + 置信度 + 声明语种一致性 |
-| `glotlid` | 行 3 | GlotLID v3（fastText） | 2000+ 语种-脚本组合（细）；低资源覆盖；`ISO3_Script` 标签 |
-| `langcross` | 行 2↔3 | 自实现（langcodes） | 交叉核对粗细识别，暴露被 lid.176 吸收的低资源语种/方言 |
-| `quality` | 行 4 | Gopher Quality + C4（中英双语：nltk + jieba 分词） | 只读：复刻 DataTrove 规则判每条文档是否通过及原因。**重复检测不在此，归 stage 4** |
+| 子命令 | 工具 | 说明 |
+|--------|------|------|
+| `extraction` | 自实现（regex + 词表） | 检测已清洗文本里的 HTML/markup/boilerplate/mojibake 残留 |
+| `langid` | fastText lid.176 | 176 种语言识别、置信度和声明一致性 |
+| `glotlid` | GlotLID（fastText） | 细粒度语种-脚本识别，输出 `ISO3_Script` 标签 |
+| `langcross` | 自实现（langcodes） | 交叉核对粗细识别，暴露可能被粗模型吸收的低资源语种 |
+| `quality` | Gopher Quality + C4 | 中英规则信号；重复检测归 Stage 4 |
 
-> **行 1 重定位**：pipeline_overview 原写 Trafilatura HTML/PDF 正文抽取，针对 raw HTML。
-> `extraction` 改为「抽取质量审计」——检测残留在成品里的杂质。不依赖 Trafilatura。
->
 > **langid vs glotlid 不是二选一**：lid.176（粗、快）出主语种分布 + 声明一致性核查；
 > GlotLID（细、2000+ 类）抓 lid.176 覆盖不到的低资源语种 + 脚本。两者机制同源
 > （都是 fastText），但**不能用「langid 低置信再升级 glotlid」门控**——粗模型会
@@ -26,9 +23,12 @@
 
 ## 输入
 
-标准 JSONL / Parquet，通过 `src/reader.py` 读取。
+标准 JSONL / Parquet，通过 `pretrain_data_eval/reader.py` 读取。
 
 ## 输出格式
+
+以下示例只展开各子命令的业务 `scores` / `flags`；每行还包含公共的
+`schema_version`、`artifact_type` 和 `doc_id`。
 
 ### extraction
 ```json
@@ -42,7 +42,7 @@
 }
 ```
 
-判定口径（v2，2026-06 改造，原始误报率过高已替换为加权风险分）：
+当前判定口径：
 
 - **HTML 残留**：标签名走白名单（绕开 `<code>` `<source>` `<var>` 这类常用作代码 metavar 的标签），需累计 `html_tag_min_count` 次（默认 3）才算；HTML 实体 `&amp;` `&nbsp;` 出现 `html_entity_min_count` 次（默认 1）即触发
 - **Boilerplate**：按出现位置加权——文档头/尾区（首尾各 5% 字符或至少 200 字符）权重 1.0，中段权重 0.2；加权和 ≥ `boilerplate_weighted_threshold`（默认 2.0）才算样板污染
@@ -103,18 +103,15 @@
 
 ## 依赖
 
-```
-fasttext>=0.9.2        # langid (lid.176) + glotlid (GlotLID v3)
-langcodes>=3.3         # langcross：ISO2/ISO3 + 宏语言归一（prefer_macrolanguage）
-nltk>=3.8              # quality：Gopher/C4 真分词器（punkt）
-jieba>=0.42            # quality：CJK 中文分词（Gopher/C4 中文适配）
+```bash
+python -m pip install -e '.[text]'
 ```
 
 > nltk 首次使用需 punkt 数据：`python -c "import nltk; nltk.download('punkt')"`（本环境已就绪）。
 
 模型（共享区，无需下载）：
 - `langid`：`/mnt/public/model/lid.176.bin`
-- `glotlid`：`/mnt/public/model/glotlid/model.bin`（GlotLID v3，含 v1/v2/v3 三版）
+- `glotlid`：`/mnt/public/model/glotlid/model.bin`
 
 路径在 `configs/stage3.yaml` 配置（`langid.model_path` / `glotlid.model_path`）。
 

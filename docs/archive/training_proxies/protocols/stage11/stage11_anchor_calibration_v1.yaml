@@ -1,0 +1,139 @@
+# Stage 11 Anchor-relative scaling-gain calibration v1.
+# Absolute gains are only comparable within one anchor/run/tokenizer.
+
+input:
+  format: jsonl
+  field_map: {}
+  batch_size: 500
+
+sampling:
+  max_docs_per_corpus: 3000
+  mode: head
+  seed: 11011
+  validation_fraction: 0.2
+  split_seed: 11011
+
+tokenizer:
+  vocab_size: 4096
+  min_frequency: 2
+  max_chars_per_corpus: 10000000
+
+model:
+  context_length: 256
+  primary:
+    d_model: 256
+    n_layers: 4
+    n_heads: 4
+    ffn_multiplier: 4
+  scale_small:
+    d_model: 128
+    n_layers: 2
+    n_heads: 4
+    ffn_multiplier: 4
+
+training:
+  steps: 600
+  checkpoints: [600]
+  batch_size: 16
+  learning_rate: 0.0005
+  min_learning_rate_ratio: 0.1
+  warmup_steps: 20
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  max_train_tokens_per_corpus: 10000000
+  seeds: [17, 29, 41, 53, 67]
+
+evaluation:
+  max_tokens_per_doc: 512
+  batch_size: 64
+  bootstrap_samples: 2000
+  confidence: 0.95
+  conditioning_min_effect_bits: 0.01
+  scaling_min_effect_bits: 0.01
+  stable_horizon_fraction: 0.8
+
+runtime:
+  device: auto
+  precision: bf16
+  torch_num_threads: 4
+  deterministic: true
+  full_input_sha256: true
+
+output:
+  base_dir: outputs/stage11_anchor_calibration_v1
+
+compatibility_gate:
+  profiles:
+    english_web: {language: en, domain: general_web}
+    chinese_web: {language: zh, domain: general_web}
+    code: {language: code, domain: code}
+    math: {language: en, domain: math}
+
+calibration:
+  version: anchor_calibration_v1
+  interpretation: relative_to_specified_anchor_structural_compatibility_and_capacity_usability
+  data_dir: data/trainability/anchor_calibration_v1
+  documents_per_anchor: 3000
+  source_shards_per_anchor: 8
+  review_samples_per_anchor: 200
+  control_seed: 20260722
+  control_levels: [0.3333333333, 0.6666666667, 1.0]
+  control_axes:
+    - word_order
+    - template
+    - repeat
+    - truncate
+    - extraction_residue
+    - html_residue
+  anchors:
+    english_web:
+      language: en
+      domain: general_web
+      source_name: openbmb_ultra_fineweb_l3_en_multi_style
+      source_dataset: openbmb/Ultra-FineWeb-L3
+      source_revision: c68ab81ad03b2d2f476fa8ab3c72bed3528da359
+      source_path: /mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_en_l3/multi_style
+      source_format: parquet
+      source_field: content
+      id_field: uid
+      license: Apache-2.0
+      license_evidence: https://hf-mirror.com/api/datasets/openbmb/Ultra-FineWeb-L3
+    chinese_web:
+      language: zh
+      domain: general_web
+      source_name: openbmb_ultra_fineweb_l3_zh_multi_style
+      source_dataset: openbmb/Ultra-FineWeb-L3
+      source_revision: c68ab81ad03b2d2f476fa8ab3c72bed3528da359
+      source_path: /mnt/public/data/Ultra-FineWeb-L3/data/ultrafineweb_zh_l3/multi_style
+      source_format: parquet
+      source_field: content
+      id_field: uid
+      license: Apache-2.0
+      license_evidence: https://hf-mirror.com/api/datasets/openbmb/Ultra-FineWeb-L3
+    code:
+      language: code
+      domain: code
+      source_name: bigcode_the_stack_dedup_python
+      source_dataset: bigcode/the-stack-dedup
+      source_revision: local_git_snapshot
+      source_path: /mnt/public/data/the-stack-dedup/data/python
+      source_format: parquet
+      source_field: content
+      id_field: hexsha
+      license: per_document_permissive
+      license_evidence: /mnt/public/data/the-stack-dedup/README.md
+      allowed_licenses: [MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Unlicense, CC0-1.0]
+    math:
+      language: en
+      domain: math
+      source_name: open_web_math
+      source_dataset: open-web-math/open-web-math
+      source_revision: fde8ef8de2300f5e778f56261843dab89f230815
+      source_path: /mnt/public/data/yhk/OpenWebMath/open-web-math___open-web-math/default/0.0.0/fde8ef8de2300f5e778f56261843dab89f230815
+      source_format: arrow
+      source_field: text
+      id_field: url
+      license: ODC-By-1.0
+      license_evidence: /mnt/public/data/yhk/OpenWebMath/open-web-math___open-web-math/default/0.0.0/fde8ef8de2300f5e778f56261843dab89f230815/LICENSE

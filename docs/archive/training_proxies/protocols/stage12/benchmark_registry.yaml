@@ -1,0 +1,438 @@
+# Benchmark 注册表
+#
+# 这是跨 Stage 共用的能力评测与污染审计名单。DataDecide 小模型代理的实验分组、
+# 候选指标和晋级状态单独维护在 stage12_benchmark_validation.yaml，避免把“已注册”
+# 误读成“已证明可由小模型代理”。
+#
+# 字段说明：
+#   name:                  唯一名称（kebab-case）
+#   family:                所属 family，用于同族对照
+#   format:                multiple_choice / math_cot / code_completion / open_generation / cloze
+#   language:              en / zh / multi
+#   tiers:                 列表，决定是否进可信度报告主表与归属层
+#                          - p1-pretrain   预训练阶段 P1-core 主目标
+#                          - p1-sft        SFT 阶段 text 类 P1 主目标
+#                          - control       明确作为某 P1 benchmark 的对照集
+#                          - experimental  历史遗留或非 P1，仅供实验/sanity check
+#   stage_targets:         pipeline 实际跑的阶段（base / sft / rlhf），可多选
+#   cross_stage_anchor:    bool，是否作为跨阶段 ΔScore 锚点（默认 false）
+#   variants:              同族对照集列表（必须也在本注册表中）
+#   applicable_methods:    可应用的检测方法 tag 列表
+#   trustworthiness_default: 默认裁决，跑完后由 pipeline 升级或确认（positive control 到位前仅作 ranked 排序参考）
+#   data_source:           hf / modelscope / local / livebench-api
+#   data_id:               loader 用的标识（HF dataset id 或本地路径）
+#   note:                  备注
+#
+# 方法 tag：
+#   ts_guessing    TS-Guessing（黑盒，仅 QA / 多选）
+#   perm_option    选项排列检测（灰盒，仅多选）
+#   paraphrase     Paraphrase Stress Test（黑盒）
+#   mink_plus_plus Min-K%++（灰盒）
+#   spv_mia        SPV-MIA（灰盒，SFT 阶段最强）
+#   self_critique  Self-Critique（黑盒，RLHF 后唯一可用）
+
+benchmarks:
+
+  # ====================================================================
+  # P1-core 预训练阶段主目标（对齐内部模型评测注册名单）
+  # ====================================================================
+
+  - name: mmlu-pro
+    family: mmlu-pro
+    format: multiple_choice
+    language: en
+    tiers: [p1-pretrain, p1-sft]
+    stage_targets: [base, sft]
+    cross_stage_anchor: true
+    variants: [mmlu-cf, mmmlu]
+    applicable_methods: [ts_guessing, perm_option, paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: TIGER-Lab/MMLU-Pro
+    note: 通用知识主目标，base/SFT 两阶段都跑，构成跨阶段差分锚点
+
+  - name: gpqa-diamond
+    family: gpqa
+    format: multiple_choice
+    language: en
+    tiers: [p1-pretrain, p1-sft]
+    stage_targets: [base, sft]
+    cross_stage_anchor: true
+    variants: []
+    applicable_methods: [perm_option, paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: Idavidrein/gpqa
+    data_subset: gpqa_diamond
+    note: 科学推理主目标，无强同族对照，任务孤岛诊断失效，依赖 Paraphrase
+
+  - name: gpqa
+    family: gpqa
+    format: multiple_choice
+    language: en
+    tiers: [experimental]
+    stage_targets: [base, sft]
+    variants: [gpqa-diamond]
+    applicable_methods: [perm_option, paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: Idavidrein/gpqa
+    data_subset: gpqa_main
+    note: GPQA 全量 main（448 题，含 diamond）。gated，需 HF_TOKEN；split 仅 train。4 选项，落 perm_option 有效区间
+
+  - name: math
+    family: math
+    format: math_cot
+    language: en
+    tiers: [p1-pretrain, p1-sft]
+    stage_targets: [base, sft]
+    cross_stage_anchor: true
+    variants: [gsm-plus, gsm1k, mgsm]
+    applicable_methods: [paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: EleutherAI/hendrycks_math
+    data_subset: algebra
+    note: 数学推理跨阶段锚点。两阶段都跑 MATH；SFT 阶段额外跑 MATH-500/AIME-2025 不参与 ΔScore_stage（原 hendrycks/competition_math 下架，改用 EleutherAI/hendrycks_math；第一版仅 algebra 子集，全 7 子集合并待 loader 支持 multi-subset）
+
+  - name: evalplus
+    family: code-py
+    format: code_completion
+    language: en
+    tiers: [p1-pretrain]
+    stage_targets: [base]
+    variants: [lbpp, mhpp, livecodebench]
+    applicable_methods: [paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: evalplus/humanevalplus
+    note: 函数级代码主目标（HumanEval+ / MBPP+ 合集，此 entry 指向 HumanEval+；MBPP+ 用 evalplus/mbppplus 单独加载）
+
+  - name: livecodebench
+    family: livebench-code
+    format: code_completion
+    language: en
+    tiers: [p1-pretrain, p1-sft]
+    stage_targets: [base, sft]
+    cross_stage_anchor: true
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: TBD
+    note: 动态竞赛代码，月更滚动天然抗污染；同时作为 evalplus 的干净对照。原 livecodebench/code_generation_lite 是 loader script 格式，datasets 5.0 不支持，data_id 待换
+
+  - name: mgsm
+    family: mgsm
+    format: math_cot
+    language: multi
+    tiers: [p1-pretrain]
+    stage_targets: [base]
+    variants: []
+    applicable_methods: [paraphrase, mink_plus_plus]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: juletxara/mgsm
+    data_subset: en
+    note: 多语言数学，反过来作 MATH 的干净对照（HF 需 subset，第一版只下 en；多语言对照可后续按需扩展 zh/de/fr 等）
+
+  - name: mmmlu
+    family: mmlu-multi
+    format: multiple_choice
+    language: multi
+    tiers: [p1-pretrain]
+    stage_targets: [base]
+    variants: []
+    applicable_methods: [perm_option, paraphrase, mink_plus_plus]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: openai/MMMLU
+    data_subset: ZH_CN
+    note: 多语言通用，反过来作 MMLU-Pro 的干净对照。data_subset=语言码（ZH_CN/FR_FR/JA_JP/...，共 14 语言+default），4 选项落 perm_option 有效区间；split 仅 test
+
+  # ====================================================================
+  # P1 SFT 阶段 text 类主目标（base 阶段不评）
+  # ====================================================================
+
+  - name: ifeval
+    family: ifeval
+    format: open_generation
+    language: en
+    tiers: [p1-sft]
+    stage_targets: [sft]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: google/IFEval
+    note: 指令遵循主目标，传统污染方法适用性差，主要靠 Paraphrase
+
+  - name: aime-2025
+    family: aime
+    format: math_cot
+    language: en
+    tiers: [p1-sft]
+    stage_targets: [sft]
+    variants: [aime-2024]
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: TBD
+    note: 数学推理 SFT 加跑，对照 aime-2024。HF 路径待确认，未确认前 download_benchmarks 会跳过
+
+  - name: math-500
+    family: math
+    format: math_cot
+    language: en
+    tiers: [p1-sft]
+    stage_targets: [sft]
+    variants: [math, gsm-plus, gsm1k]
+    applicable_methods: [paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: HuggingFaceH4/MATH-500
+    note: 数学推理 SFT 加跑，MATH 子集；不参与 ΔScore_stage，参与同族 ΔScore_family
+
+  - name: simpleqa-verified
+    family: simpleqa
+    format: open_generation
+    language: en
+    tiers: [p1-sft]
+    stage_targets: [sft]
+    variants: [simpleqa]
+    applicable_methods: [paraphrase]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: TBD
+    note: 单一事实问答，SimpleQA 的 verified 子集。HF 路径待确认
+
+  - name: simpleqa
+    family: simpleqa
+    format: open_generation
+    language: en
+    tiers: [p1-sft]
+    stage_targets: [sft]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: basicv8vc/SimpleQA
+    note: 单一事实问答，无强同族对照
+
+  - name: livebench
+    family: livebench
+    format: open_generation
+    language: en
+    tiers: [p1-sft]
+    stage_targets: [sft]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: livebench-api
+    data_id: livebench-2026-06
+    note: 综合 SFT 主目标，月更滚动天然抗污染，反过来作其他 benchmark 干净对照
+
+  # ====================================================================
+  # control：明确作为某 P1 benchmark 的同族对照集
+  # ====================================================================
+
+  - name: mmlu-cf
+    family: mmlu
+    format: multiple_choice
+    language: en
+    tiers: [control]
+    stage_targets: [base, sft]
+    variants: []
+    applicable_methods: [perm_option, paraphrase]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: microsoft/MMLU-CF
+    note: 无污染 MMLU 对照，作为 mmlu-pro 的弱对照（不同 family 同任务）
+
+  - name: gsm1k
+    family: gsm
+    format: math_cot
+    language: en
+    tiers: [control]
+    stage_targets: [base, sft]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: local
+    data_id: data/gsm1k.jsonl
+    note: Scale AI 不公开发布，需联系获取；作为 math 的同族对照
+
+  - name: gsm-plus
+    family: gsm
+    format: math_cot
+    language: en
+    tiers: [control]
+    stage_targets: [base, sft]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: qintongli/GSM-Plus
+    note: GSM8K 同族扰动版本，作为 math 的同族对照
+
+  - name: lbpp
+    family: code-py
+    format: code_completion
+    language: en
+    tiers: [control]
+    stage_targets: [base]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: CohereForAI/lbpp
+    note: DeepMind LBPP，evalplus 的同族对照
+
+  - name: mhpp
+    family: code-py
+    format: code_completion
+    language: en
+    tiers: [control]
+    stage_targets: [base]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: SparksofAGI/MHPP
+    note: MBPP 改进版（实测 MBPP 65.4% 污染），evalplus 的同族对照
+
+  - name: aime-2024
+    family: aime
+    format: math_cot
+    language: en
+    tiers: [control]
+    stage_targets: [sft]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: clean
+    data_source: hf
+    data_id: HuggingFaceH4/aime_2024
+    note: AIME-2025 的同族对照（时间上更早，但题型同分布）
+
+  # ====================================================================
+  # experimental：非 P1，不进可信度报告主表；保留作 sanity check 与方法验证
+  # ====================================================================
+
+  - name: mmlu
+    family: mmlu
+    format: multiple_choice
+    language: en
+    tiers: [experimental]
+    stage_targets: [base, sft]
+    variants: [mmlu-cf]
+    applicable_methods: [ts_guessing, perm_option, paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: cais/mmlu
+    data_subset: all
+    note: 已知广泛污染，Phase 1 sanity check 的 dirty 参照（非 P1 主目标）
+
+  - name: gsm8k
+    family: gsm
+    format: math_cot
+    language: en
+    tiers: [experimental]
+    stage_targets: [base, sft]
+    variants: [gsm1k, gsm-plus]
+    applicable_methods: [paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: gsm8k
+    data_subset: main
+    note: 已知广泛污染（含 GPT-4 训练集），Phase 1 sanity check 的 dirty 参照
+
+  - name: humaneval
+    family: code-py
+    format: code_completion
+    language: en
+    tiers: [experimental]
+    stage_targets: [base]
+    variants: [lbpp, mhpp]
+    applicable_methods: [paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: openai_humaneval
+    note: evalplus 主目标的前身
+
+  - name: mbpp
+    family: code-py
+    format: code_completion
+    language: en
+    tiers: [experimental]
+    stage_targets: [base]
+    variants: [lbpp, mhpp]
+    applicable_methods: [paraphrase]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: mbpp
+    note: evalplus 主目标的前身
+
+  - name: c-eval
+    family: c-eval
+    format: multiple_choice
+    language: zh
+    tiers: [experimental]
+    stage_targets: [base, sft]
+    variants: [cmmlu]
+    applicable_methods: [perm_option, paraphrase, mink_plus_plus, spv_mia]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: ceval/ceval-exam
+    note: 不在 P1 名单，Qwen 系列检出高污染（Yang AAAI 2024）
+
+  - name: cmmlu
+    family: c-eval
+    format: multiple_choice
+    language: zh
+    tiers: [experimental]
+    stage_targets: [base, sft]
+    variants: []
+    applicable_methods: [perm_option, paraphrase]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: haonan-li/cmmlu
+    note: 不在 P1 名单
+
+  - name: cmb
+    family: cmb
+    format: multiple_choice
+    language: zh
+    tiers: [experimental]
+    stage_targets: [base, sft]
+    variants: []
+    applicable_methods: [perm_option]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: FreedomIntelligence/CMB
+    note: 不在 P1 名单，Qwen2-72B 检出 42% 泄漏
+
+  - name: mt-bench
+    family: mt-bench
+    format: open_generation
+    language: en
+    tiers: [experimental]
+    stage_targets: [sft]
+    variants: [arena-hard]
+    applicable_methods: [paraphrase]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: lmsys/mt_bench_human_judgments
+    note: 不在 P1 名单，SFT 80 条数据即可拉升 45%（KIEval）
+
+  - name: arena-hard
+    family: mt-bench
+    format: open_generation
+    language: en
+    tiers: [experimental]
+    stage_targets: [sft]
+    variants: []
+    applicable_methods: [paraphrase]
+    trustworthiness_default: suspect
+    data_source: hf
+    data_id: lmarena-ai/arena-hard-auto
+    note: 不在 P1 名单

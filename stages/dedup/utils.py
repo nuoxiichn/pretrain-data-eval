@@ -3,18 +3,39 @@
   compute_exact_dedup   — MD5-based exact dedup (doc-level + paragraph-level)
   compute_minhash_dedup — MinHash + LSH near-dedup (word n-gram)
   compute_semdedup      — embedding semantic near-dedup (bge-m3 + cosine clustering)
+  compute_repetition_audit — within-document Gopher-style repetition audit
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections import defaultdict
+import re
+from collections import Counter, defaultdict
 from typing import Callable, Iterable
 
 import numpy as np
 
-from src.reader import Document
-from src.schema import DocResult
+from pretrain_data_eval.reader import Document
+from pretrain_data_eval.schema import DocResult
+
+
+DEFAULT_REPETITION_THRESHOLDS: dict[str, object] = {
+    "duplicate_line_fraction": 0.30,
+    "duplicate_paragraph_fraction": 0.30,
+    "duplicate_line_char_fraction": 0.20,
+    "duplicate_paragraph_char_fraction": 0.20,
+    "top_ngram_fraction": {
+        2: 0.20,
+        3: 0.18,
+        4: 0.16,
+        5: 0.15,
+        6: 0.14,
+        7: 0.13,
+        8: 0.12,
+        9: 0.11,
+        10: 0.10,
+    },
+}
 
 
 # ── Exact dedup ───────────────────────────────────────────────────────────────
@@ -497,6 +518,116 @@ def compute_ngram_dedup(
         "overlap_threshold": overlap_threshold,
     }
     return per_doc, summary
+
+
+# ── Within-document repetition ───────────────────────────────────────────────
+
+def _duplicate_unit_fractions(units: list[str]) -> tuple[float, float]:
+    normalized = [" ".join(unit.split()).casefold() for unit in units if unit.strip()]
+    if not normalized:
+        return 0.0, 0.0
+    counts = Counter(normalized)
+    duplicate_units = sum(count - 1 for count in counts.values())
+    total_chars = sum(len(unit) for unit in normalized)
+    duplicate_chars = sum(len(unit) * (count - 1) for unit, count in counts.items())
+    return duplicate_units / len(normalized), duplicate_chars / max(1, total_chars)
+
+
+def _top_repeated_ngram_fraction(tokens: list[str], size: int) -> float:
+    if len(tokens) < size * 2:
+        return 0.0
+    counts = Counter(
+        tuple(tokens[index : index + size])
+        for index in range(len(tokens) - size + 1)
+    )
+    repeated_occurrences = max(counts.values(), default=1) - 1
+    return min(1.0, repeated_occurrences * size / len(tokens))
+
+
+def compute_repetition_audit(
+    docs: Iterable[Document],
+    thresholds: dict[str, object] | None = None,
+    on_doc: Callable[[DocResult], None] | None = None,
+) -> tuple[list[DocResult], dict]:
+    """Detect excessive within-document repetition using frozen Gopher-style limits."""
+    selected = thresholds or DEFAULT_REPETITION_THRESHOLDS
+    ngram_thresholds = {
+        int(size): float(value)
+        for size, value in dict(selected["top_ngram_fraction"]).items()
+    }
+    scalar_thresholds = {
+        key: float(selected[key])
+        for key in (
+            "duplicate_line_fraction",
+            "duplicate_paragraph_fraction",
+            "duplicate_line_char_fraction",
+            "duplicate_paragraph_char_fraction",
+        )
+    }
+    results: list[DocResult] = []
+    high_repetition_docs = 0
+    trigger_counts: Counter[str] = Counter()
+    total = 0
+    for document in docs:
+        total += 1
+        text = str(document.get("text") or "")
+        lines = [line for line in text.splitlines() if line.strip()]
+        paragraphs = [paragraph for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()]
+        line_fraction, line_char_fraction = _duplicate_unit_fractions(lines)
+        paragraph_fraction, paragraph_char_fraction = _duplicate_unit_fractions(paragraphs)
+        tokens = re.findall(r"\w+|[^\w\s]", text.casefold(), flags=re.UNICODE)
+        ngram_fractions = {
+            size: _top_repeated_ngram_fraction(tokens, size)
+            for size in sorted(ngram_thresholds)
+        }
+        metrics = {
+            "duplicate_line_fraction": line_fraction,
+            "duplicate_paragraph_fraction": paragraph_fraction,
+            "duplicate_line_char_fraction": line_char_fraction,
+            "duplicate_paragraph_char_fraction": paragraph_char_fraction,
+        }
+        triggers = [
+            key for key, value in metrics.items() if value > scalar_thresholds[key]
+        ]
+        triggers.extend(
+            f"top_{size}gram_fraction"
+            for size, value in ngram_fractions.items()
+            if value > ngram_thresholds[size]
+        )
+        is_high_repetition = bool(triggers)
+        if is_high_repetition:
+            high_repetition_docs += 1
+            trigger_counts.update(triggers)
+        scores = {
+            **{key: round(value, 6) for key, value in metrics.items()},
+            "token_count": len(tokens),
+            "top_ngram_fraction": {
+                str(size): round(value, 6) for size, value in ngram_fractions.items()
+            },
+            "triggered_thresholds": triggers,
+        }
+        result = DocResult(
+            doc_id=str(document["doc_id"]),
+            scores=scores,
+            flags={"is_high_repetition": is_high_repetition},
+        )
+        if on_doc is not None:
+            on_doc(result)
+        else:
+            results.append(result)
+    return results, {
+        "method": "gopher_repetition_v1",
+        "total_docs": total,
+        "high_repetition_docs": high_repetition_docs,
+        "high_repetition_pct": high_repetition_docs / total if total else 0.0,
+        "trigger_counts": dict(sorted(trigger_counts.items())),
+        "thresholds": {
+            **scalar_thresholds,
+            "top_ngram_fraction": {
+                str(size): value for size, value in ngram_thresholds.items()
+            },
+        },
+    }
 
 
 # ── Semantic dedup (embedding) ────────────────────────────────────────────────

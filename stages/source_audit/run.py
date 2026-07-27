@@ -20,14 +20,13 @@ if str(_ROOT) not in sys.path:
 import click
 import yaml
 
-from src.reader import read_documents
-from src.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
-from src.schema import DocResult, make_output_dir, use_output_dir, write_per_doc, write_summary
+from pretrain_data_eval.reader import read_documents
+from pretrain_data_eval.sampling import DEFAULT_SAMPLE_MODE, DEFAULT_SEED, SAMPLE_MODES, sample_documents
+from pretrain_data_eval.schema import DocResult, make_output_dir, use_output_dir, write_per_doc, write_summary
 from stages.source_audit.utils import (
     DocStatsAggregator,
     compute_doc_stats,
     compute_license,
-    get_length_bucket,
     make_tokenizer,
 )
 
